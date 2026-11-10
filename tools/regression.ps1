@@ -85,17 +85,20 @@ function Invoke-GuiExe($exe, [string[]]$argv, [string]$workdir) {
     return [pscustomobject]@{ Code = $p.ExitCode; Output = $text.Trim() }
 }
 
-Write-Host "== 1.3 size gate (hello = CUI baseline 303104 B; gallery = full-controls load) =="
+Write-Host "== 1.3 size gate (hello = CUI baseline 303104 B; gallery = full-controls load; pickers = pickers family) =="
 # 两种产物口径不同，不能共用一个门槛：
 #   hello   = 最小应用，真正的体积红线（CUI hello 296 KB 基线，只能收紧）
 #   gallery = 加载全部控件的演示，体积随控件数增长（实测约 1.5 KB/控件），
 #             它的意义是「全量装载的代价」，门槛按控件集增长单独设定。
+#   pickers = 选择器族单独产物（不塞 gallery，否则 gallery 会顶穿门槛）
 $helloLimit = 303104
 $galleryLimit = 327680
+$pickersLimit = 212992
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
-    @{ path = 'zig-out/bin/zzui-gallery-x64.exe'; limit = $galleryLimit }
+    @{ path = 'zig-out/bin/zzui-gallery-x64.exe'; limit = $galleryLimit },
+    @{ path = 'zig-out/bin/zzui-pickers-x64.exe'; limit = $pickersLimit }
 )
 foreach ($e in $exes) {
     if (Test-Path $e.path) {
@@ -209,6 +212,53 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     }
 } else {
     Skip "gallery" "zzui-gallery-x64.exe not found"
+}
+
+Write-Host "== 1.7 pickers example (--once / --shot / --shot-1) =="
+if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
+    $tmp4 = Join-Path $env:TEMP 'zzui-regression-pickers'
+    if (-not (Test-Path $tmp4)) { New-Item -ItemType Directory -Path $tmp4 -Force | Out-Null }
+    Remove-Item (Join-Path $tmp4 'zzui-pickers.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-pickers-x64.exe') @('--once') $tmp4
+    Check "pickers:once-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $pb = Join-Path $tmp4 'zzui-pickers.bmp'
+    if (Test-Path $pb) {
+        $expect = 54 + 760 * 1000 * 4
+        Check "pickers:once-size" ((Get-Item $pb).Length -eq $expect) ("bytes=" + (Get-Item $pb).Length + " expect=" + $expect)
+    } else {
+        Check "pickers:once-size" $false "bmp not written"
+    }
+    # 两页真渲染：都要有文字像素（页 1 = 滚到底：表盘/刻度尺/直方图/签名板）
+    foreach ($pg in 0, 1) {
+        $pbmp = if ($pg -eq 0) { Join-Path $tmp4 'zzui-pickers-shot.bmp' } else { Join-Path $tmp4 'zzui-pickers-shot1.bmp' }
+        Remove-Item $pbmp -ErrorAction SilentlyContinue
+        $flag = if ($pg -eq 0) { '--shot' } else { '--shot-1' }
+        $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-pickers-x64.exe') @($flag) $tmp4
+        Check "pickers:page$pg-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+        if (Test-Path $pbmp) {
+            $g = [IO.File]::ReadAllBytes($pbmp)
+            $gw = [BitConverter]::ToInt32($g, 18)
+            $gh = [BitConverter]::ToInt32($g, 22)
+            $dark = 0
+            $accent = 0
+            for ($y = 20; $y -lt [Math]::Min(900, $gh); $y += 2) {
+                for ($x = 20; $x -lt [Math]::Min(460, $gw); $x += 2) {
+                    $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                    if ($g[$off] -lt 100 -and $g[$off+1] -lt 100 -and $g[$off+2] -lt 100) { $dark++ }
+                    if ($g[$off] -eq 0xEB -and $g[$off+1] -eq 0x63 -and $g[$off+2] -eq 0x25) { $accent++ }
+                }
+            }
+            # 页 0（日历/多选/滚轮）文字密集；页 1 以矢量图形（表盘/刻度尺/直方图/签名板）为主，
+            # 文字天然少 → 文字门槛按页取，另外用强调色像素证明控件真的画了。
+            $textGate = if ($pg -eq 0) { 200 } else { 60 }
+            Check "pickers:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
+            Check "pickers:page$pg-accent" ($accent -gt 40) ("accent=" + $accent)
+        } else {
+            Check "pickers:page$pg-text" $false "bmp not written"
+        }
+    }
+} else {
+    Skip "pickers" "zzui-pickers-x64.exe not found"
 }
 
 Write-Host "== 2. continuity =="

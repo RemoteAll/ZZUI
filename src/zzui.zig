@@ -20,6 +20,7 @@ pub const table = @import("table.zig");
 pub const grid = @import("grid.zig");
 pub const dock = @import("dock.zig");
 pub const dockspace = @import("dockspace.zig");
+pub const pickers = @import("pickers.zig");
 pub const charts = @import("charts.zig");
 pub const chrome = @import("chrome.zig");
 pub const disclosure = @import("disclosure.zig");

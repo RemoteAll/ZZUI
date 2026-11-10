@@ -3,10 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const optimize = b.option(std.lang.Optimize, "optimize", "debug / safe / fast / small") orelse .small;
 
-    const specs = [_]struct { name: []const u8, arch: std.Target.Cpu.Arch }{
-        .{ .name = "zzui-hello-x64", .arch = .x86_64 },
-        .{ .name = "zzui-hello-x86", .arch = .x86 },
-        .{ .name = "zzui-gallery-x64", .arch = .x86_64 },
+    const specs = [_]struct { name: []const u8, arch: std.Target.Cpu.Arch, src: []const u8 }{
+        .{ .name = "zzui-hello-x64", .arch = .x86_64, .src = "examples/hello.zig" },
+        .{ .name = "zzui-hello-x86", .arch = .x86, .src = "examples/hello.zig" },
+        .{ .name = "zzui-gallery-x64", .arch = .x86_64, .src = "examples/gallery.zig" },
+        .{ .name = "zzui-pickers-x64", .arch = .x86_64, .src = "examples/pickers.zig" },
     };
 
     for (specs) |spec| {
@@ -20,11 +21,10 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        const is_gallery = std.mem.startsWith(u8, spec.name, "zzui-gallery");
         const exe = b.addExecutable(.{
             .name = spec.name,
             .root_module = b.createModule(.{
-                .root_source_file = b.path(if (is_gallery) "examples/gallery.zig" else "examples/hello.zig"),
+                .root_source_file = b.path(spec.src),
                 .target = target,
                 .optimize = optimize,
                 .strip = true,

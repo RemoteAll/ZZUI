@@ -763,6 +763,13 @@ pub const Context = struct {
         return 0;
     }
 
+    /// 直接设定滚动偏移（对位 CUI `cui_scroll_to`：程序化滚到某处，如"跳到最新"）。
+    /// 实际夹取在下一帧 `scroll` 里按内容高完成。
+    pub fn scrollTo(self: *Context, id: []const u8, offset: f32) void {
+        const st = self.scrollState(Context.idOf(id));
+        st.offset = if (offset > 0) offset else 0;
+    }
+
     /// 滚动视口：滚轮滚动、子节点裁剪到视口，结束时画滚动条。
     pub fn scroll(self: *Context, opts: ScrollOpts) ScrollScope {
         const rect = self.reserve(0, opts.height, true);
