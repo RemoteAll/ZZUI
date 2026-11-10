@@ -280,6 +280,12 @@ pub const Context = struct {
     measure_fn: *const fn (?*anyopaque, []const u8, f32) t.Size = defaultMeasure,
 
     // ------------------------------------------------------------ 帧生命周期
+    /// 置位溢出标记；Debug 构建额外打印来源（发布构建不留字符串）。
+    fn markOverflow(self: *Context, where: []const u8) void {
+        self.overflowed = true;
+        if (@import("builtin").mode == .debug) std.debug.print("[zzui] capacity overflow: {s}\n", .{where});
+    }
+
     pub fn begin(self: *Context, width: f32, height: f32) void {
         self.hits_prev = self.hits_curr;
         self.hits_prev_n = self.hits_curr_n;
@@ -542,7 +548,7 @@ pub const Context = struct {
         if (self.hits_curr_n < MAX_HITS) {
             self.hits_curr[self.hits_curr_n] = .{ .id = id, .rect = rect, .layer = self.overlay_layer };
             self.hits_curr_n += 1;
-        } else self.overflowed = true;
+        } else self.markOverflow("hits");
         var out = Interaction{};
         out.hover = rect.contains(self.input.mouse.x, self.input.mouse.y);
         out.focused = focusable and self.focus_id == id;
@@ -692,7 +698,7 @@ pub const Context = struct {
     /// 覆盖层线段：在节点之后绘制（勾、焦点环等）。
     pub fn addOverlayLine(self: *Context, from: t.Point, to: t.Point, width: f32, color: t.Color) void {
         if (self.overlay_count >= MAX_OVERLAYS) {
-            self.overflowed = true;
+            self.markOverflow("overlays");
             return;
         }
         self.overlays[self.overlay_count] = .{ .line = .{ .from = from, .to = to, .width = width, .color = color, .clip = self.clip, .layer = self.overlay_layer } };
@@ -708,7 +714,7 @@ pub const Context = struct {
 
     fn push(self: *Context, cmd: Command) void {
         if (self.cmd_count >= MAX_COMMANDS) {
-            self.overflowed = true;
+            self.markOverflow("commands");
             return;
         }
         self.cmds[self.cmd_count] = cmd;
@@ -717,7 +723,7 @@ pub const Context = struct {
 
     fn addNode(self: *Context, n: Node) usize {
         if (self.node_count >= MAX_NODES) {
-            self.overflowed = true;
+            self.markOverflow("nodes");
             return MAX_NODES - 1;
         }
         var node = n;

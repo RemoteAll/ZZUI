@@ -10,7 +10,7 @@ const t = @import("types.zig");
 
 /// 圆弧线段上限（`MAX_OVERLAYS` = 192，一帧里还有别的线段，这里保守取 20 段/整圈）。
 fn arcSegs(span: f32) usize {
-    const n: f32 = @max(3.0, 20.0 * span);
+    const n: f32 = @max(3.0, 16.0 * span);
     return @as(usize, @intFromFloat(n));
 }
 
@@ -136,11 +136,12 @@ fn beginPlot(ui: *core.Context, series: []const Series, opts: ChartOpts) Plot {
     return .{ .rect = plot, .lo = rng.lo, .hi = rng.hi };
 }
 
-/// 面积填充：用**粗线段**（每 8px 一条）而不是逐像素矩形——
-/// 逐像素 box 会把 `MAX_NODES` 吃光（曾导致后面的图表整块不画）。
+/// 面积填充：用**宽矩形条**（每 20px 一条）。
+/// 用矩形而不是粗线段，是因为线段预算（`MAX_OVERLAYS`）比节点预算更紧张：
+/// 一页放多个图表时线段会先被打满（实测 192 条）。
 fn fillArea(ui: *core.Context, plot: Plot, values: []const f32, color: t.Color) void {
     if (values.len < 2) return;
-    const stride: f32 = 12;
+    const stride: f32 = 20;
     const step = plot.rect.w / @as(f32, @floatFromInt(values.len - 1));
     const bottom = plot.rect.y + plot.rect.h;
     var x = plot.rect.x;
@@ -152,7 +153,7 @@ fn fillArea(ui: *core.Context, plot: Plot, values: []const f32, color: t.Color) 
         const v = values[k0] + (values[k1] - values[k0]) * frac;
         const y = plot.y(v);
         if (bottom > y) {
-            ui.addOverlayLine(.{ .x = x + stride / 2, .y = y }, .{ .x = x + stride / 2, .y = bottom }, stride, color);
+            ui.addBox(.{ .x = x, .y = y, .w = stride + 0.5, .h = bottom - y }, .{ .fill = color });
         }
     }
 }
@@ -307,7 +308,7 @@ pub fn donutChart(
 }
 
 fn halfArc(ui: *core.Context, cx: f32, cy: f32, r: f32, from: f32, to: f32, color: t.Color, width: f32) void {
-    const segn: usize = 14;
+    const segn: usize = 12;
     var i: usize = 0;
     while (i < segn) : (i += 1) {
         const a0 = from + (to - from) * (@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segn)));

@@ -998,3 +998,168 @@ test "bar chart handles multiple series side by side" {
     try std.testing.expect(ui.node_count >= before + 8);
     try std.testing.expect(!ui.overflowed);
 }
+// ---------------------------------------------------------------- 全控件冒烟（审计补丁）
+// 目的：39 个用例只直接调用了 33/63 个控件函数；这两个冒烟用例把所有控件都构建一遍，
+// 断言「不溢出容量」——溢出会让界面莫名少画，这是本轮审计里最容易漏的一类问题。
+
+test "smoke: widgets + extras build without overflowing" {
+    var ui = core.Context{};
+    var flag = true;
+    var other = false;
+    var mode: u32 = 0;
+    var vol: f32 = 0.5;
+    var buf: [32]u8 = @splat(0);
+    var blen: usize = 0;
+    var caret: usize = 0;
+    var dlg = false;
+    var menu_open = false;
+    var since: f64 = -1;
+    var copied = false;
+
+    ui.begin(760, 2400);
+    {
+        var col = ui.column(.{ .pad = 12, .gap = 8 });
+        defer col.end();
+
+        widgets.heading(&ui, "Heading", 2);
+        widgets.text(&ui, "body text");
+        widgets.secondary(&ui, "secondary text");
+        widgets.textInt(&ui, "n=", 7, " times");
+        widgets.separator(&ui);
+        _ = widgets.button(&ui, "Primary", .{ .variant = .primary });
+        _ = widgets.button(&ui, "Ghost", .{ .variant = .ghost });
+        _ = widgets.buttonEx(&ui, "Ex", .{});
+        widgets.controlSwitch(&ui, "Switch", &flag);
+        widgets.checkbox(&ui, "Checkbox", &other);
+        widgets.radio(&ui, "Radio", &mode, 1);
+        widgets.slider(&ui, "Volume", &vol, 0, 1);
+        _ = widgets.input(&ui, "in", buf[0..], &blen, &caret, .{ .placeholder = "type" });
+        _ = widgets.menu(&ui, "m", .{ .x = 10, .y = 10, .w = 80, .h = 24 }, &.{.{ .label = "A" }}, &menu_open, .{});
+        widgets.tooltip(&ui, "tip", .{ .x = 10, .y = 10, .w = 40, .h = 20 }, "hint", false, 0.3);
+        if (dlg) _ = widgets.dialog(&ui, &dlg, .{});
+
+        extras.muted(&ui, "muted");
+        extras.badge(&ui, "badge", .success);
+        _ = extras.link(&ui, "link");
+        extras.code(&ui, "code");
+        extras.kbd(&ui, "Ctrl K");
+        extras.progress(&ui, 0.4, .{ .label = "p" });
+        extras.meter(&ui, "m", 0.6);
+        extras.progressRing(&ui, 0.5, 40);
+        extras.spinner(&ui, 16);
+        extras.skeleton(&ui, 80, 10);
+        extras.emptyState(&ui, "empty", "hint");
+        {
+            var card = extras.card(&ui, .{});
+            defer card.end();
+            extras.metric(&ui, "Metric", "42", "+1");
+        }
+        extras.timelineItem(&ui, "10:00", "Title", "Body");
+        _ = extras.copyButton(&ui, "cp", &copied);
+        extras.passwordStrength(&ui, 3, 4);
+        _ = overlay.toast(&ui, "t", "toast", &flag, &since, .{ .ttl = 0 });
+    }
+    ui.paint();
+    try std.testing.expect(!ui.overflowed);
+}
+
+test "smoke: controls + textedit + overlay build without overflowing" {
+    var ui = core.Context{};
+    var tab: usize = 0;
+    var seg: usize = 0;
+    var chip_on = false;
+    var stars: u8 = 2;
+    var count: i32 = 3;
+    var radio_idx: usize = 0;
+    var lo: f32 = 20;
+    var hi: f32 = 60;
+    var page_no: usize = 2;
+    var sel_idx: usize = 0;
+    var sel_open = false;
+    var pop_open = false;
+    var ctx_open = false;
+    var pal_open = false;
+    var q: [32]u8 = @splat(0);
+    var qlen: usize = 0;
+    var qcaret: usize = 0;
+    var amount: f32 = 4;
+    var notes: [64]u8 = @splat(0);
+    var nlen: usize = 0;
+    var ncaret: usize = 0;
+    var pwd: [32]u8 = @splat(0);
+    var plen: usize = 0;
+    var pcaret: usize = 0;
+
+    ui.begin(760, 2400);
+    {
+        var col = ui.column(.{ .pad = 12, .gap = 8 });
+        defer col.end();
+
+        _ = controls.chip(&ui, "chip", &chip_on);
+        controls.tabs(&ui, "tabs", &.{ "A", "B" }, &tab);
+        controls.segmented(&ui, "seg", &.{ "X", "Y" }, &seg);
+        _ = controls.breadcrumb(&ui, &.{ "Root", "Dir" }, 1);
+        controls.pagination(&ui, "pg", &page_no, 9);
+        controls.rating(&ui, "rt", &stars, 5);
+        controls.stepper(&ui, "st", &count, 0, 9);
+        controls.radioGroup(&ui, "rg", &.{ "One", "Two" }, &radio_idx);
+        controls.rangeSlider(&ui, "rs", &lo, &hi, 0, 100);
+        _ = controls.navItem(&ui, "Nav", true);
+
+        _ = textedit.textarea(&ui, "ta", notes[0..], &nlen, &ncaret, .{ .rows = 3 });
+        _ = textedit.search(&ui, "sq", q[0..], &qlen, &qcaret, .{});
+        _ = textedit.number(&ui, "num", &amount, .{ .label = "Qty", .min = 0, .max = 10 });
+        _ = widgets.input(&ui, "pw", pwd[0..], &plen, &pcaret, .{ .password = true });
+
+        _ = overlay.selectField(&ui, "sel", &.{ "a", "b" }, &sel_idx, &sel_open, .{});
+        _ = overlay.selectPopup(&ui, "sel", .{ .x = 0, .y = 0, .w = 100, .h = 30 }, &.{ "a", "b" }, &sel_idx, &sel_open, .{});
+        if (overlay.popoverBegin(&ui, "pop", .{ .x = 10, .y = 10, .w = 60, .h = 24 }, &pop_open, .{})) overlay.popoverEnd(&ui);
+        _ = overlay.commandPalette(&ui, "pal", q[0..], &qlen, &qcaret, &.{"cmd"}, &pal_open, .{});
+        _ = overlay.contextMenu(&ui, "ctx", &.{.{ .label = "Copy" }}, &ctx_open, .{ .x = 5, .y = 5 });
+    }
+    ui.paint();
+    try std.testing.expect(!ui.overflowed);
+}
+
+test "smoke: table + charts build without overflowing" {
+    var ui = core.Context{};
+    var sort = table.SortState{};
+
+    ui.begin(760, 1600);
+    {
+        var col = ui.column(.{ .pad = 12, .gap = 10 });
+        defer col.end();
+
+        const cols = [_]table.Column{ .{ .label = "Name", .width = 0 }, .{ .label = "N", .width = 60, .text_align = .end, .sortable = true } };
+        {
+            var tbl = table.begin(&ui, "tbl", cols[0..], &sort, .{ .height = 3 * 28 });
+            defer tbl.end();
+            var i: usize = 0;
+            while (i < 8) : (i += 1) {
+                var r = tbl.row(i, i == 2);
+                r.text(0, "row", theme.text);
+                r.text(1, "1", theme.secondary);
+            }
+        }
+        {
+            var tree = table.begin(&ui, "tree", cols[0..], &sort, .{ .height = 100 });
+            defer tree.end();
+            var node = table.TreeRow{ .depth = 0, .has_children = true, .expanded = true };
+            const res = table.treeRow(&tree, 0, &node, "src", false);
+            _ = res;
+        }
+
+        const vals = [_]f32{ 1, 4, 2, 6, 5, 8, 7, 9 };
+        const series = [_]charts.Series{.{ .values = &vals, .color = theme.accent }};
+        charts.sparkline(&ui, &vals, .{ .height = 24, .fill = true });
+        charts.lineChart(&ui, &series, .{ .height = 100, .fill = true });
+        charts.barChart(&ui, &series, .{ .height = 90 });
+        const donut = [_]f32{ 3, 2, 1 };
+        const labels = [_][]const u8{ "a", "b", "c" };
+        const colors = [_]t.Color{ theme.accent, theme.success, theme.warn };
+        charts.donutChart(&ui, &donut, &labels, &colors, .{ .size = 80 });
+        charts.gauge(&ui, 0.5, .{ .size = 100, .label = "g" });
+    }
+    ui.paint();
+    try std.testing.expect(!ui.overflowed);
+}

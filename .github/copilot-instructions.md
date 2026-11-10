@@ -28,6 +28,12 @@
 - **必须多平台（用户硬性要求）**：平台差异只能存在于 `src/platform/*`；core / render / widgets **不得引用 Win32 或其他平台 API**。新增平台 = 在 `platform.zig` 加一个联合成员并实现同一组方法。
 - **日志/审计只记有意义事件**；新增周期行为先算 CPU/内存/IO/带宽开销（见用户级指令「资源与带宽惯例」）。
 
+## 迁移完成度（务必先看）
+
+- **CUI 全量未迁完**：实测 CUI 公开 API 467 个 / 51,486 行 C；ZZUI 已对位 92 个（19.7%），控件类 82/371（22%）。
+- 完整审计（已迁移清单、未迁移清单分 A/B/C 档、质量差异、盲区）：**docs/迁移审计.md**。
+- 结论：基础七族 55 个控件已完成；未做的是重型/专用组件（编辑器/终端/diff/markdown/emoji/位图/AI/开发面板）与平台扩展。
+
 ## 每轮收尾（务必）
 
 ① `docs/决策记录.md` 新增一节（**含用户原话**）；② 运行 `tools/continuity/sync-memory.ps1` 同步记忆（项目根运行或传 `-ProjectPath`）；③ 跑回归 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/regression.ps1` 并如实汇报；④ 提交（有远端则推送）。
