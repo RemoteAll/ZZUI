@@ -21,6 +21,7 @@ var g_key_count: usize = 0;
 var g_chars: [64]u8 = @splat(0);
 var g_chars_len: usize = 0;
 var g_high_surrogate: u16 = 0;
+var g_wheel: f32 = 0;
 var g_quit: bool = false;
 var g_need_resize: bool = false;
 
@@ -104,6 +105,8 @@ pub const Backend = struct {
         self.input.down = g_down;
         self.input.pressed = g_pressed;
         g_pressed = false;
+        self.input.wheel = g_wheel;
+        g_wheel = 0;
         self.input.key_count = 0;
         var ki: usize = 0;
         while (ki < g_key_count) : (ki += 1) {
@@ -150,16 +153,23 @@ pub const Backend = struct {
         return bmpfile.saveBmp(path, self.pixels(), self.px_w, self.px_h);
     }
 
-    pub fn present(self: *Backend, ui: *core.Context) void {
+    /// 只画指定层的文本（按层渲染由 App 逐层驱动，保证浮层文字盖住页面文字）。
+    pub fn drawTextLayer(self: *Backend, ui: *core.Context, layer: u8) void {
         const dc = self.hdc_mem orelse return;
         var i: usize = 0;
         while (i < ui.cmd_count) : (i += 1) {
             switch (ui.cmds[i]) {
-                .text => |c| self.drawTextCmd(dc, c),
+                .text => |c| {
+                    if (c.layer == layer) self.drawTextCmd(dc, c);
+                },
                 .rect => {},
                 .line => {},
             }
         }
+    }
+
+    pub fn present(self: *Backend) void {
+        const dc = self.hdc_mem orelse return;
         const wdc = w.GetDC(self.hwnd) orelse return;
         _ = w.BitBlt(wdc, 0, 0, @intCast(self.px_w), @intCast(self.px_h), dc, 0, 0, w.SRCCOPY);
         _ = w.ReleaseDC(self.hwnd, wdc);
@@ -185,6 +195,18 @@ pub const Backend = struct {
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, c.text);
         const old = w.SelectObject(dc, font) orelse return;
+        var saved: i32 = 0;
+        if (c.clip) |cl| {
+            saved = w.SaveDC(dc);
+            const cx: i32 = @intFromFloat(@round(cl.x * self.dpi));
+            const cy: i32 = @intFromFloat(@round(cl.y * self.dpi));
+            const cx2: i32 = @intFromFloat(@round((cl.x + cl.w) * self.dpi));
+            const cy2: i32 = @intFromFloat(@round((cl.y + cl.h) * self.dpi));
+            _ = w.IntersectClipRect(dc, cx, cy, cx2, cy2);
+        }
+        defer {
+            if (saved != 0) _ = w.RestoreDC(dc, saved);
+        }
         _ = w.SetBkMode(dc, w.TRANSPARENT);
         const color: w.DWORD = @as(w.DWORD, c.color.r) | (@as(w.DWORD, c.color.g) << 8) | (@as(w.DWORD, c.color.b) << 16);
         _ = w.SetTextColor(dc, color);
@@ -319,6 +341,12 @@ fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi)
         },
         w.WM_CHAR => {
             appendUtf16(@truncate(wp));
+            return 0;
+        },
+        w.WM_MOUSEWHEEL => {
+            const raw: u16 = @truncate(wp >> 16);
+            const delta: i16 = @bitCast(raw);
+            g_wheel += @as(f32, @floatFromInt(delta)) / 120.0;
             return 0;
         },
         w.WM_CLOSE => {

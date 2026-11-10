@@ -44,6 +44,15 @@ fn buildControls(ui: *zzui.core.Context, st: *State) void {
         zzui.widgets.radio(ui, "Dark", &st.mode, 1);
     }
 
+    {
+        var list = ui.scroll(.{ .id = "items", .height = 140, .gap = 6 });
+        defer list.end();
+        var i: usize = 0;
+        while (i < 20) : (i += 1) {
+            ui.textIntRun("Item ", @intCast(i + 1), " (wheel to scroll)", zzui.theme.font_body, zzui.theme.text);
+        }
+    }
+
     zzui.widgets.slider(ui, "Volume", &st.volume, 0, 1);
 
     zzui.widgets.secondary(ui, "Text wraps to the content width, so a long sentence stays inside the window " ++
@@ -58,7 +67,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     if (hasFlag(cmdline, "--once")) return runOnce();
 
     var st = State{};
-    var app = zzui.App.init(.{ .title = "Hello, ZZUI", .width = 420, .height = 580 }) catch return 1;
+    var app = zzui.App.init(.{ .title = "Hello, ZZUI", .width = 420, .height = 760 }) catch return 1;
     defer app.deinit();
     while (app.next()) {
         build(&app.ui, &st);
@@ -70,18 +79,18 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
 }
 
 fn runOnce() i32 {
-    var app = zzui.App.initHeadless(420, 580) catch return 2;
+    var app = zzui.App.initHeadless(420, 760) catch return 2;
     defer app.deinit();
     if (!app.next()) return 3;
     var st = State{};
     buildOnce(&app.ui, &st);
     app.end();
-    zzui.bmpfile.saveBmp("zzui-hello.bmp", app.backend.pixels(), 420, 580) catch return 4;
+    zzui.bmpfile.saveBmp("zzui-hello.bmp", app.backend.pixels(), 420, 760) catch return 4;
     return 0;
 }
 
 fn runShot() i32 {
-    var app = zzui.App.init(.{ .title = "ZZUI shot", .width = 460, .height = 640, .show = false }) catch return 5;
+    var app = zzui.App.init(.{ .title = "ZZUI shot", .width = 460, .height = 820, .show = false }) catch return 5;
     defer app.deinit();
     if (!app.next()) return 6;
     var st = State{};

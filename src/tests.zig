@@ -230,3 +230,54 @@ test "escape closes the dialog" {
     try std.testing.expectEqual(widgets.DialogResult.cancel, r);
     try std.testing.expect(!open);
 }
+
+test "scroll clips children to the viewport" {
+    var ui = core.Context{};
+    ui.begin(300, 400);
+    var sc = ui.scroll(.{ .id = "s", .height = 100 });
+    const r = ui.reserve(100, 20, false);
+    ui.addText(r, "x", 14, theme.text);
+    sc.end();
+    ui.paint();
+
+    var found = false;
+    var i: usize = 0;
+    while (i < ui.node_count) : (i += 1) {
+        if (ui.nodes[i].kind == .text) {
+            const cl = ui.nodes[i].clip orelse return error.MissingClip;
+            try std.testing.expectApproxEqAbs(@as(f32, 300), cl.w, 0.01);
+            try std.testing.expectApproxEqAbs(@as(f32, 100), cl.h, 0.01);
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "scroll clamps offset to content height" {
+    var ui = core.Context{};
+    const id = core.Context.idOf("list");
+    var frame: usize = 0;
+    while (frame < 2) : (frame += 1) {
+        if (frame == 1) {
+            ui.input = .{ .mouse = .{ .x = 50, .y = 50 }, .wheel = -50 };
+        } else {
+            ui.input = .{};
+        }
+        ui.begin(300, 400);
+        var sc = ui.scroll(.{ .id = "list", .height = 100, .gap = 4 });
+        var i: usize = 0;
+        while (i < 20) : (i += 1) {
+            _ = ui.reserve(100, 20, false);
+        }
+        sc.end();
+        ui.paint();
+    }
+
+    var off: f32 = -1;
+    var i: usize = 0;
+    while (i < ui.scroll_n) : (i += 1) {
+        if (ui.scrolls[i].id == id) off = ui.scrolls[i].offset;
+    }
+    // 内容高 = 20*20 + 19*4 = 476；max offset = 476 - 100 = 376
+    try std.testing.expectApproxEqAbs(@as(f32, 376), off, 0.01);
+}

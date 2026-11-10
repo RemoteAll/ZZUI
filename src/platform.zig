@@ -67,10 +67,17 @@ pub const Backend = union(enum) {
         };
     }
 
-    pub fn present(self: *Backend, ui: *core.Context) void {
+    pub fn drawTextLayer(self: *Backend, ui: *core.Context, layer: u8) void {
         switch (self.*) {
-            .win32 => |*b| b.present(ui),
-            .null_backend => |*b| b.present(ui),
+            .win32 => |*b| b.drawTextLayer(ui, layer),
+            .null_backend => |*b| b.drawTextLayer(ui, layer),
+        }
+    }
+
+    pub fn present(self: *Backend) void {
+        switch (self.*) {
+            .win32 => |*b| b.present(),
+            .null_backend => |*b| b.present(),
         }
     }
 

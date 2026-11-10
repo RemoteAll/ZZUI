@@ -6,13 +6,17 @@ const t = @import("types.zig");
 const core = @import("core.zig");
 const theme = @import("theme.zig");
 
-pub fn render(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f32) void {
-    clear(pixels, width, height, theme.bg);
+pub fn render(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f32, layer: u8) void {
+    if (layer == 0) clear(pixels, width, height, theme.bg);
     var i: usize = 0;
     while (i < ui.cmd_count) : (i += 1) {
         switch (ui.cmds[i]) {
-            .rect => |c| fillRoundRect(pixels, width, height, c.rect, c.radius, c.color, scale),
-            .line => |c| drawLine(pixels, width, height, c.from, c.to, c.width, c.color, scale),
+            .rect => |c| {
+                if (c.layer == layer) fillRoundRect(pixels, width, height, c.rect, c.radius, c.color, c.clip, scale);
+            },
+            .line => |c| {
+                if (c.layer == layer) drawLine(pixels, width, height, c.from, c.to, c.width, c.color, c.clip, scale);
+            },
             .text => {},
         }
     }
@@ -37,13 +41,24 @@ fn fillRoundRect(
     rect: t.Rect,
     radius: f32,
     color: t.Color,
+    clip: ?t.Rect,
     scale: f32,
 ) void {
     if (color.a == 0) return;
-    const x0 = px(rect.x, scale);
-    const y0 = px(rect.y, scale);
-    const x1 = px(rect.x + rect.w, scale);
-    const y1 = px(rect.y + rect.h, scale);
+    var x0 = px(rect.x, scale);
+    var y0 = px(rect.y, scale);
+    var x1 = px(rect.x + rect.w, scale);
+    var y1 = px(rect.y + rect.h, scale);
+    if (clip) |cl| {
+        const cx0 = px(cl.x, scale);
+        const cy0 = px(cl.y, scale);
+        const cx1 = px(cl.x + cl.w, scale);
+        const cy1 = px(cl.y + cl.h, scale);
+        if (x0 < cx0) x0 = cx0;
+        if (y0 < cy0) y0 = cy0;
+        if (x1 > cx1) x1 = cx1;
+        if (y1 > cy1) y1 = cy1;
+    }
     if (x1 <= x0 or y1 <= y0) return;
     // 圆角不能超过短边的一半，否则角点判定会把整块跳过（胶囊按钮就是 radius=999）。
     const half_short = @min(@as(f32, @floatFromInt(x1 - x0)), @as(f32, @floatFromInt(y1 - y0))) / 2;
@@ -103,6 +118,7 @@ fn drawLine(
     to: t.Point,
     line_width: f32,
     color: t.Color,
+    clip: ?t.Rect,
     scale: f32,
 ) void {
     if (color.a == 0 or line_width <= 0) return;
@@ -117,6 +133,16 @@ fn drawLine(
     var y0: i32 = @intFromFloat(@floor(@min(ay, by) - pad));
     var x1: i32 = @intFromFloat(@ceil(@max(ax, bx) + pad));
     var y1: i32 = @intFromFloat(@ceil(@max(ay, by) + pad));
+    if (clip) |cl| {
+        const cx0 = px(cl.x, scale);
+        const cy0 = px(cl.y, scale);
+        const cx1 = px(cl.x + cl.w, scale);
+        const cy1 = px(cl.y + cl.h, scale);
+        if (x0 < cx0) x0 = cx0;
+        if (y0 < cy0) y0 = cy0;
+        if (x1 > cx1) x1 = cx1;
+        if (y1 > cy1) y1 = cy1;
+    }
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > @as(i32, @intCast(width))) x1 = @intCast(width);

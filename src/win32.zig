@@ -764,3 +764,6 @@ pub extern "gdi32" fn TextOutW(
     lpString: [*]const u16,
     c: i32,
 ) callconv(.winapi) BOOL;
+pub extern "gdi32" fn SaveDC(hdc: HDC) callconv(.winapi) i32;
+pub extern "gdi32" fn RestoreDC(hdc: HDC, nSavedDC: i32) callconv(.winapi) BOOL;
+pub extern "gdi32" fn IntersectClipRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) callconv(.winapi) i32;

@@ -66,6 +66,8 @@ pub const Input = struct {
     down: bool = false,
     /// 本帧刚按下（用于建立鼠标捕获）。
     pressed: bool = false,
+    /// 本帧滚轮增量（正数向上）。
+    wheel: f32 = 0,
     click: ?Point = null,
     quit: bool = false,
     keys: [8]Key = @splat(.unknown),

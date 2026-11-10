@@ -39,7 +39,9 @@ pub const Backend = struct {
         return self.buf;
     }
 
-    pub fn present(_: *Backend, _: *core.Context) void {}
+    pub fn present(_: *Backend) void {}
+
+    pub fn drawTextLayer(_: *Backend, _: *core.Context, _: u8) void {}
 
     pub fn saveSurface(self: *Backend, path: []const u8) !void {
         // 无窗口后端的 BMP 由调用方用 bmpfile 写；这里只保留统一签名。

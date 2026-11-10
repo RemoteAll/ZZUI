@@ -22,12 +22,18 @@ pub const Node = struct {
     text: []const u8 = "",
     font_size: f32 = theme.font_body,
     text_color: t.Color = theme.text,
+    /// 构建时的裁剪矩形（零尺寸 = 不裁剪）。
+    clip: ?t.Rect = null,
+    /// 构建时的层号（主树 0，浮层从 1 起）。
+    layer: u8 = 0,
 };
 
 pub const RectCmd = struct {
     rect: t.Rect,
     radius: f32,
     color: t.Color,
+    clip: ?t.Rect = null,
+    layer: u8 = 0,
 };
 
 pub const TextCmd = struct {
@@ -35,6 +41,8 @@ pub const TextCmd = struct {
     text: []const u8,
     size: f32,
     color: t.Color,
+    clip: ?t.Rect = null,
+    layer: u8 = 0,
 };
 
 pub const LineCmd = struct {
@@ -42,6 +50,8 @@ pub const LineCmd = struct {
     to: t.Point,
     width: f32,
     color: t.Color,
+    clip: ?t.Rect = null,
+    layer: u8 = 0,
 };
 
 pub const Command = union(enum) {
@@ -57,6 +67,13 @@ pub const MAX_HITS = 128;
 pub const MAX_FOCUS = 64;
 pub const MAX_OVERLAYS = 64;
 pub const MAX_TEXT_POOL = 8192;
+pub const MAX_SCROLLS = 16;
+
+const ScrollState = struct {
+    id: u64 = 0,
+    offset: f32 = 0,
+    content_h: f32 = 0,
+};
 
 const Frame = struct {
     node: ?usize = null,
@@ -132,6 +149,14 @@ pub const OverlayOpts = struct {
     id: u64 = 0,
 };
 
+pub const ScrollOpts = struct {
+    /// 用于跨帧保存滚动位置；同一页面里必须唯一。
+    id: []const u8 = "scroll",
+    height: f32 = 200,
+    pad: f32 = 0,
+    gap: f32 = 0,
+};
+
 /// 浮层作用域：结束后层号回落。
 pub const OverlayScope = struct {
     ui: *Context,
@@ -141,6 +166,47 @@ pub const OverlayScope = struct {
         if (self.ended) return;
         self.ui.overlay_layer -= 1;
         self.ended = true;
+    }
+};
+
+/// 滚动视口作用域：结束时夹取偏移、恢复裁剪、画滚动条、推进父容器。
+pub const ScrollScope = struct {
+    ui: *Context,
+    id: u64 = 0,
+    rect: t.Rect = .{},
+    old_clip: ?t.Rect = null,
+    bar_w: f32 = 6,
+    ended: bool = false,
+
+    pub fn end(self: *ScrollScope) void {
+        if (self.ended) return;
+        self.ended = true;
+        const ui = self.ui;
+        if (ui.depth <= 1) return;
+        ui.depth -= 1;
+        const f = ui.stack[ui.depth];
+        const content_h = f.cursor + f.pad * 2;
+        const st = ui.scrollState(self.id);
+        st.content_h = content_h;
+        const max_off = if (content_h > self.rect.h) content_h - self.rect.h else 0;
+        if (st.offset < 0) st.offset = 0;
+        if (st.offset > max_off) st.offset = max_off;
+        ui.clip = self.old_clip;
+
+        if (max_off > 0) {
+            const track_x = self.rect.x + self.rect.w - self.bar_w;
+            const thumb_h = self.rect.h * (self.rect.h / content_h);
+            const tpos = if (max_off > 0) st.offset / max_off else 0;
+            const thumb_y = self.rect.y + (self.rect.h - thumb_h) * tpos;
+            ui.addBox(.{ .x = track_x, .y = self.rect.y, .w = self.bar_w, .h = self.rect.h }, .{ .fill = theme.surface, .radius = self.bar_w / 2 });
+            ui.addBox(.{ .x = track_x, .y = thumb_y, .w = self.bar_w, .h = thumb_h }, .{ .fill = theme.border, .radius = self.bar_w / 2 });
+        }
+
+        const p = &ui.stack[f.parent];
+        switch (p.dir) {
+            .column => advance(p, self.rect.h, self.rect.h),
+            .row => advance(p, self.rect.w, self.rect.h),
+        }
     }
 };
 
@@ -171,6 +237,13 @@ pub const Context = struct {
     overlay_layer: u8 = 0,
     overlay_backdrop_clicked: bool = false,
     click_target: u64 = 0,
+    /// 当前裁剪矩形（null = 不裁剪）。
+    clip: ?t.Rect = null,
+    /// 本帧用到的最大层号（供按层渲染）。
+    max_layer: u8 = 0,
+    /// 滚动状态跨帧保留（不进 begin 重置）。
+    scrolls: [MAX_SCROLLS]ScrollState = @splat(.{}),
+    scroll_n: usize = 0,
     /// 帧内字符串池：控件里拼出来的文本（如数字）要拷进来，否则节点会持有失效的栈切片。
     text_pool: [MAX_TEXT_POOL]u8 = undefined,
     text_pool_len: usize = 0,
@@ -191,6 +264,8 @@ pub const Context = struct {
         self.text_pool_len = 0;
         self.overlay_layer = 0;
         self.overlay_backdrop_clicked = false;
+        self.max_layer = 0;
+        self.clip = null;
         if (!self.input.down) self.active_id = 0;
         if (self.input.keyPressed(.tab)) self.advanceFocus();
         // 点击归属：上一帧命中里，包含点击点且层号最高（同层后者胜）的那个。
@@ -278,6 +353,7 @@ pub const Context = struct {
         if (self.depth <= 1) return;
         self.depth -= 1;
         const f = self.stack[self.depth];
+        if (f.absolute) return; // 绝对面板保留给定矩形，不推进父容器游标
         const main = f.cursor;
         const rect = switch (f.dir) {
             .column => t.Rect{
@@ -294,7 +370,6 @@ pub const Context = struct {
             },
         };
         if (f.node) |n| self.nodes[n].rect = rect;
-        if (f.absolute) return;
         const p = &self.stack[f.parent];
         switch (p.dir) {
             .column => advance(p, rect.h, rect.h),
@@ -443,6 +518,7 @@ pub const Context = struct {
     /// 开始一个浮层：遮罩全窗口（层号 +1），之后的控件都算浮层。
     pub fn beginOverlay(self: *Context, opts: OverlayOpts) OverlayScope {
         self.overlay_layer +|= 1;
+        if (self.overlay_layer > self.max_layer) self.max_layer = self.overlay_layer;
         const full = t.Rect{ .x = 0, .y = 0, .w = self.width, .h = self.height };
         const hit = self.interactEx(opts.id ^ 0xBACC0FFEE, full, false);
         self.overlay_backdrop_clicked = hit.clicked;
@@ -499,12 +575,12 @@ pub const Context = struct {
             switch (n.kind) {
                 .box => {
                     if (n.fill.a > 0) {
-                        self.push(.{ .rect = .{ .rect = n.rect, .radius = n.radius, .color = n.fill } });
+                        self.push(.{ .rect = .{ .rect = n.rect, .radius = n.radius, .color = n.fill, .clip = n.clip, .layer = n.layer } });
                     }
-                    if (n.border_width > 0 and n.border.a > 0) self.pushBorder(n.rect, n.border_width, n.border);
+                    if (n.border_width > 0 and n.border.a > 0) self.pushBorder(n.rect, n.border_width, n.border, n.clip, n.layer);
                 },
                 .text => {
-                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color } });
+                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer } });
                 },
             }
         }
@@ -517,15 +593,15 @@ pub const Context = struct {
     /// 覆盖层线段：在节点之后绘制（勾、焦点环等）。
     pub fn addOverlayLine(self: *Context, from: t.Point, to: t.Point, width: f32, color: t.Color) void {
         if (self.overlay_count >= MAX_OVERLAYS) return;
-        self.overlays[self.overlay_count] = .{ .line = .{ .from = from, .to = to, .width = width, .color = color } };
+        self.overlays[self.overlay_count] = .{ .line = .{ .from = from, .to = to, .width = width, .color = color, .clip = self.clip, .layer = self.overlay_layer } };
         self.overlay_count += 1;
     }
 
-    fn pushBorder(self: *Context, r: t.Rect, w: f32, c: t.Color) void {
-        self.push(.{ .rect = .{ .rect = .{ .x = r.x, .y = r.y, .w = r.w, .h = w }, .radius = 0, .color = c } });
-        self.push(.{ .rect = .{ .rect = .{ .x = r.x, .y = r.y + r.h - w, .w = r.w, .h = w }, .radius = 0, .color = c } });
-        self.push(.{ .rect = .{ .rect = .{ .x = r.x, .y = r.y, .w = w, .h = r.h }, .radius = 0, .color = c } });
-        self.push(.{ .rect = .{ .rect = .{ .x = r.x + r.w - w, .y = r.y, .w = w, .h = r.h }, .radius = 0, .color = c } });
+    fn pushBorder(self: *Context, r: t.Rect, w: f32, c: t.Color, clip: ?t.Rect, layer: u8) void {
+        self.push(.{ .rect = .{ .rect = .{ .x = r.x, .y = r.y, .w = r.w, .h = w }, .radius = 0, .color = c, .clip = clip, .layer = layer } });
+        self.push(.{ .rect = .{ .rect = .{ .x = r.x, .y = r.y + r.h - w, .w = r.w, .h = w }, .radius = 0, .color = c, .clip = clip, .layer = layer } });
+        self.push(.{ .rect = .{ .rect = .{ .x = r.x, .y = r.y, .w = w, .h = r.h }, .radius = 0, .color = c, .clip = clip, .layer = layer } });
+        self.push(.{ .rect = .{ .rect = .{ .x = r.x + r.w - w, .y = r.y, .w = w, .h = r.h }, .radius = 0, .color = c, .clip = clip, .layer = layer } });
     }
 
     fn push(self: *Context, cmd: Command) void {
@@ -536,9 +612,57 @@ pub const Context = struct {
 
     fn addNode(self: *Context, n: Node) usize {
         if (self.node_count >= MAX_NODES) return MAX_NODES - 1;
-        self.nodes[self.node_count] = n;
+        var node = n;
+        node.clip = self.clip;
+        node.layer = self.overlay_layer;
+        self.nodes[self.node_count] = node;
         self.node_count += 1;
         return self.node_count - 1;
+    }
+
+    fn scrollState(self: *Context, id: u64) *ScrollState {
+        var i: usize = 0;
+        while (i < self.scroll_n) : (i += 1) {
+            if (self.scrolls[i].id == id) return &self.scrolls[i];
+        }
+        if (self.scroll_n >= self.scrolls.len) return &self.scrolls[0];
+        self.scrolls[self.scroll_n] = .{ .id = id };
+        self.scroll_n += 1;
+        return &self.scrolls[self.scroll_n - 1];
+    }
+
+    /// 滚动视口：滚轮滚动、子节点裁剪到视口，结束时画滚动条。
+    pub fn scroll(self: *Context, opts: ScrollOpts) ScrollScope {
+        const rect = self.reserve(0, opts.height, true);
+        const id = Context.idOf(opts.id);
+        const st = self.scrollState(id);
+        const hit = self.interactEx(id ^ 0x5C011, rect, false);
+        if (hit.hover and self.input.wheel != 0) {
+            st.offset -= self.input.wheel * 32;
+            if (st.offset < 0) st.offset = 0;
+        }
+
+        const old_clip = self.clip;
+        self.clip = intersectClip(old_clip, rect);
+        self.addBox(rect, .{ .fill = theme.bg });
+
+        if (self.depth < MAX_DEPTH) {
+            const bar_w: f32 = 6;
+            const content_w = rect.w - opts.pad * 2 - bar_w;
+            self.stack[self.depth] = .{
+                .node = null,
+                .parent = self.depth - 1,
+                .dir = .column,
+                .content_x = rect.x + opts.pad,
+                .content_y = rect.y + opts.pad - st.offset,
+                .width = if (content_w > 0) content_w else 0,
+                .pad = opts.pad,
+                .gap = opts.gap,
+                .absolute = true,
+            };
+            self.depth += 1;
+        }
+        return .{ .ui = self, .id = id, .rect = rect, .old_clip = old_clip };
     }
 };
 
@@ -555,6 +679,23 @@ fn advance(f: *Frame, main: f32, cross: f32) void {
 fn defaultMeasure(_: ?*anyopaque, s: []const u8, size: f32) t.Size {
     const n: f32 = @floatFromInt(s.len);
     return .{ .w = n * size * 0.55, .h = size * 1.35 };
+}
+
+/// 裁剪求交：null 表示无裁剪；完全不相交返回 null。
+fn intersectClip(a: ?t.Rect, b: t.Rect) ?t.Rect {
+    const b_on = b.w > 0 and b.h > 0;
+    if (a) |ra| {
+        if (!b_on) return ra;
+        const x0 = if (ra.x > b.x) ra.x else b.x;
+        const y0 = if (ra.y > b.y) ra.y else b.y;
+        const x1 = if (ra.x + ra.w < b.x + b.w) ra.x + ra.w else b.x + b.w;
+        const y1 = if (ra.y + ra.h < b.y + b.h) ra.y + ra.h else b.y + b.h;
+        const w = x1 - x0;
+        const h = y1 - y0;
+        if (w <= 0 or h <= 0) return null;
+        return .{ .x = x0, .y = y0, .w = w, .h = h };
+    }
+    return if (b_on) b else null;
 }
 
 pub const MAX_LINES = 32;

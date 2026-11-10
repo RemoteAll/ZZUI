@@ -55,15 +55,19 @@ pub const App = struct {
         return self.backend.saveSurface(path);
     }
 
-    /// 结束一帧：生成绘制指令、软件光栅、呈现。
+    /// 结束一帧：生成绘制指令、按层软件光栅 + 文本、呈现。
     pub fn end(self: *App) void {
         self.ui.paint();
         const sz = self.backend.size();
         const s = self.backend.scale();
         const wpx: u32 = @intFromFloat(@round(sz.w * s));
         const hpx: u32 = @intFromFloat(@round(sz.h * s));
-        render.render(&self.ui, self.backend.pixels(), wpx, hpx, s);
-        self.backend.present(&self.ui);
+        var layer: u8 = 0;
+        while (layer <= self.ui.max_layer) : (layer += 1) {
+            render.render(&self.ui, self.backend.pixels(), wpx, hpx, s, layer);
+            self.backend.drawTextLayer(&self.ui, layer);
+        }
+        self.backend.present();
         self.backend.input().click = null;
     }
 };
