@@ -7,8 +7,9 @@
 ## 项目现状（2026-11-10 里程碑 1-6 已落地）
 
 - **定位**：ZigLang 的 UI 界面框构；**CUI（`G:\Code\C\CUI`）为移植蓝本，必须多平台**（用户口径）。
-- 已实现：平台层抽象（`src/platform.zig` + `platform/win32.zig` + `platform/null.zig`）、立即模式核心（节点 / 栈布局 / 绘制指令 / 上一帧命中判定 / Tab 焦点 / 鼠标捕获 / 帧内文本池 / 文本换行 / 浮层层与点击优先级 / **裁剪与滚动视口** / **帧时间与悬停计时**）、软件光栅（BGRA、圆角、线段、裁剪）、**55 个控件**：`widgets`（heading / text / secondary / textInt / separator / button / switch / checkbox / radio / slider / input / dialog / menu / tooltip，14）+ `extras`（muted / badge / link / code / kbd / progress / meter / progressRing / spinner / skeleton / emptyState / card / metric / timelineItem / copyButton / passwordStrength，16）+ `controls`（chip / tabs / segmented / breadcrumb / pagination / rating / stepper / radioGroup / rangeSlider / navItem，10） + `overlay`（toast / popoverBegin+End / selectField+selectPopup / contextMenu / commandPalette，5） + `textedit`（textarea / search / number，3） + `table`（begin/row/cell/end + treeRow，2） + `charts`（sparkline / lineChart / barChart / donutChart / gauge，5）、`examples/hello.zig`（最小样例）与 `examples/gallery.zig`（控件橱窗，**分 4 页**：Components / Forms / Data / Charts；`--once` / `--shot-N`）。
-- 产物（实测）：`zzui-hello-x64.exe` **173,568 B（169.5 KB）**、x86 **174,592 B（170.5 KB）**、`zzui-gallery-x64.exe` **210,944 B（206 KB）**；体积门槛 303,104 B（CUI hello 基线）写在 `tools/regression.ps1`，只能收紧；单测 39 项。
+- 已实现：平台层抽象（`src/platform.zig` + `platform/win32.zig` + `platform/null.zig`）、立即模式核心（节点 / 栈布局 / 绘制指令 / 上一帧命中判定 / Tab 焦点 / 鼠标捕获 / 帧内文本池 / 文本换行 / 浮层层与点击优先级 / **裁剪与滚动视口** / **帧时间与悬停计时**）、软件光栅（BGRA、圆角、线段、裁剪）、**59 个控件**：`widgets`（heading / text / secondary / textInt / separator / button / switch / checkbox / radio / slider / input / dialog / menu / tooltip，14）+ `extras`（muted / badge / link / code / kbd / progress / meter / progressRing / spinner / skeleton / emptyState / card / metric / timelineItem / copyButton / passwordStrength，16）+ `controls`（chip / tabs / segmented / breadcrumb / pagination / rating / stepper / radioGroup / rangeSlider / navItem，10） + `overlay`（toast / popoverBegin+End / selectField+selectPopup / contextMenu / commandPalette，5） + `textedit`（textarea / search / number，3） + `table`（begin/row/cell/end + treeRow，2） + `charts`（sparkline / lineChart / barChart / donutChart / gauge，5） + `chrome`（menuBar / toolbar / statusBar / docTabs，4）、`examples/hello.zig`（最小样例）与 `examples/gallery.zig`（控件橱窗，**分 4 页**：Components / Forms / Data / Charts；`--once` / `--shot-N`）。
+- 产物（实测）：`zzui-hello-x64.exe` **173,568 B（169.5 KB）**、x86 **174,592 B（170.5 KB）**、`zzui-gallery-x64.exe` **216,576 B（211.5 KB）**；体积门槛 303,104 B（CUI hello 基线）写在 `tools/regression.ps1`，只能收紧；单测 45 项。
+- **体积口径**：指产物 `.exe` 字节数（`-Osmall` + `-fstrip` + `x86_64-windows-gnu` 不链 libc + `--subsystem windows`），**不是代码行数**。基线：空 GUI 程序 4.5 KB、最小 ZZUI 程序 146.5 KB（**框架占 hello 的 86%**）。详见 `docs/迁移审计.md` §1.1。
 - 远端：`https://github.com/RemoteAll/ZZUI.git`（remote 名 `origin`，分支 `main`）。
 - 待办：Cocoa / X11 后端、帧末统一布局、状态回收与动画、深色主题；文本当前由平台层用系统字体画（核心不带 TTF 光栅器）。
 
@@ -30,9 +31,9 @@
 
 ## 迁移完成度（务必先看）
 
-- **CUI 全量未迁完**：实测 CUI 公开 API 467 个 / 51,486 行 C；ZZUI 已对位 92 个（19.7%），控件类 82/371（22%）。
+- **CUI 全量未迁完**：实测 CUI 公开 API 467 个 / 51,486 行 C；ZZUI 已对位 99 个（21.2%），控件类 99/371（26.7%）。
 - 完整审计（已迁移清单、未迁移清单分 A/B/C 档、质量差异、盲区）：**docs/迁移审计.md**。
-- 结论：基础七族 55 个控件已完成；未做的是重型/专用组件（编辑器/终端/diff/markdown/emoji/位图/AI/开发面板）与平台扩展。
+- 结论：七族 59 个控件 + 应用外壳已完成；未做的是重型/专用组件（编辑器/终端/diff/markdown/emoji/位图/AI/开发面板）与平台扩展。
 
 ## 每轮收尾（务必）
 

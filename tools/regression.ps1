@@ -177,7 +177,7 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     }
 
     # 4 页逐页真渲染：每页都要有文字像素（证明该页控件真的画了）
-    foreach ($pg in 0, 1, 2, 3) {
+    foreach ($pg in 0, 1, 2, 3, 4) {
         $bmp = Join-Path $tmp3 ("zzui-gallery-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @("--shot-$pg") $tmp3

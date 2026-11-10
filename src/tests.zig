@@ -8,6 +8,7 @@ const overlay = @import("overlay.zig");
 const textedit = @import("textedit.zig");
 const table = @import("table.zig");
 const charts = @import("charts.zig");
+const chrome = @import("chrome.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
@@ -1162,4 +1163,102 @@ test "smoke: table + charts build without overflowing" {
     }
     ui.paint();
     try std.testing.expect(!ui.overflowed);
+}
+
+// ---------------------------------------------------------------- 应用外壳（chrome）
+
+test "menu bar opens one menu at a time and reports the picked item" {
+    var ui = core.Context{};
+    var open: ?usize = null;
+    const items = [_]widgets.MenuItem{ .{ .label = "New" }, .{ .label = "Save" } };
+    const menus = [_]chrome.MenuDef{
+        .{ .label = "File", .items = items[0..] },
+        .{ .label = "Help", .items = items[0..] },
+    };
+
+    ui.begin(600, 400);
+    _ = chrome.menuBar(&ui, "mb", menus[0..], &open, .{});
+    ui.paint();
+    const file_id = core.Context.idOf("mb") ^ (0xBA5E + 0);
+    const fr = ui.lastRect(file_id) orelse return error.NoHit;
+    const fx = fr.x + fr.w / 2;
+    const fy = fr.y + fr.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = fx, .y = fy }, .click = .{ .x = fx, .y = fy } };
+    ui.begin(600, 400);
+    _ = chrome.menuBar(&ui, "mb", menus[0..], &open, .{});
+    ui.paint();
+    try std.testing.expectEqual(@as(?usize, 0), open);
+
+    // 点第二个菜单：只保留一个打开
+    const help_id = core.Context.idOf("mb") ^ (0xBA5E + 1);
+    const hr = ui.lastRect(help_id) orelse return error.NoHit;
+    const hx = hr.x + hr.w / 2;
+    const hy = hr.y + hr.h / 2;
+    ui.input = .{ .mouse = .{ .x = hx, .y = hy }, .click = .{ .x = hx, .y = hy } };
+    ui.begin(600, 400);
+    _ = chrome.menuBar(&ui, "mb", menus[0..], &open, .{});
+    ui.paint();
+    try std.testing.expectEqual(@as(?usize, 1), open);
+
+    // 在打开的菜单里点第一项
+    const item_id = core.Context.idOf("mb") ^ (0xA11CE + 0) ^ (0x4D3E + 1 * 0x1000);
+    if (ui.lastRect(item_id)) |ir| {
+        const ix = ir.x + ir.w / 2;
+        const iy = ir.y + ir.h / 2;
+        ui.input = .{ .mouse = .{ .x = ix, .y = iy }, .click = .{ .x = ix, .y = iy } };
+        ui.begin(600, 400);
+        const pick = chrome.menuBar(&ui, "mb", menus[0..], &open, .{});
+        ui.paint();
+        try std.testing.expect(pick != null);
+        try std.testing.expectEqual(@as(usize, 1), pick.?.menu);
+        try std.testing.expectEqual(@as(usize, 0), pick.?.item);
+        try std.testing.expectEqual(@as(?usize, null), open);
+    }
+}
+
+test "doc tabs report the closed tab" {
+    var ui = core.Context{};
+    var selected: usize = 0;
+    const tabs = [_]chrome.DocTab{ .{ .label = "a.zig" }, .{ .label = "b.zig", .dirty = true } };
+
+    ui.begin(600, 300);
+    _ = chrome.docTabs(&ui, "dt", tabs[0..], &selected, .{});
+    ui.paint();
+    const close_id = core.Context.idOf("dt") ^ (0x0C10 + 1);
+    const cr = ui.lastRect(close_id) orelse return error.NoHit;
+    const cx = cr.x + cr.w / 2;
+    const cy = cr.y + cr.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = cx, .y = cy }, .click = .{ .x = cx, .y = cy } };
+    ui.begin(600, 300);
+    const res = chrome.docTabs(&ui, "dt", tabs[0..], &selected, .{});
+    ui.paint();
+
+    try std.testing.expectEqual(@as(?usize, 1), res.closed);
+}
+
+test "status bar lays out both sides and reports clicks" {
+    var ui = core.Context{};
+    const left = [_]chrome.StatusItem{.{ .label = "Ready" }};
+    const right = [_]chrome.StatusItem{ .{ .label = "UTF-8" }, .{ .label = "Zig", .clickable = true } };
+
+    ui.begin(600, 200);
+    _ = chrome.statusBar(&ui, "sb", left[0..], right[0..], .{});
+    ui.paint();
+    const right_id = core.Context.idOf("sb") ^ (0x5BAD + 1);
+    const rr = ui.lastRect(right_id) orelse return error.NoHit;
+    // 右对齐：右边缘应贴近窗口右侧内边距
+    try std.testing.expect(rr.x + rr.w > 560);
+    const rx = rr.x + rr.w / 2;
+    const ry = rr.y + rr.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = rx, .y = ry }, .click = .{ .x = rx, .y = ry } };
+    ui.begin(600, 200);
+    const pick = chrome.statusBar(&ui, "sb", left[0..], right[0..], .{});
+    ui.paint();
+
+    try std.testing.expect(pick != null);
+    try std.testing.expect(pick.?.right);
+    try std.testing.expectEqual(@as(usize, 1), pick.?.index);
 }

@@ -443,6 +443,8 @@ pub const MenuOpts = struct {
     item_h: f32 = 30,
     pad: f32 = 6,
     gap: f32 = 6,
+    /// 同一 `id` 下多个菜单实例（菜单栏/多处下拉）时用来区分交互 id。
+    id_salt: u64 = 0,
 };
 
 /// 弹出菜单：锚在 anchor 下方（放不下则上方），点空白/Esc 关闭；返回被选中项下标。
@@ -472,7 +474,7 @@ pub fn menu(ui: *core.Context, id: []const u8, anchor: t.Rect, items: []const Me
     var i: usize = 0;
     while (i < items.len) : (i += 1) {
         const r = ui.reserve(0, opts.item_h, true);
-        const iid = core.Context.idOf(id) ^ (@as(u64, 0xA11CE) + i);
+        const iid = core.Context.idOf(id) ^ (@as(u64, 0xA11CE) + i) ^ opts.id_salt;
         const it = ui.interactEx(iid, r, items[i].enabled);
         if (it.hover and items[i].enabled) {
             ui.addBox(r, .{ .fill = theme.track, .radius = 6 });

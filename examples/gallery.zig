@@ -1,12 +1,12 @@
-//! 控件画廊：分 4 页展示全部 50 个控件的实际外观。
+//! 控件画廊：分 5 页展示全部 59 个控件的实际外观。
 //! 正常启动开窗口（点页签切换）；`--once` 无窗口渲染当前页；`--shot-N` 用隐藏窗口真渲染第 N 页。
 //!
-//! **分页不是为了好看**：一页塞满 50 个控件会超过 `MAX_NODES`（256），
+//! **分页不是为了好看**：一页塞满全部控件会超过 `MAX_NODES`（256），
 //! 而把容量扩到 512 会让产物多 79 KB（`Context` 变大直接换体积），所以按页分摊。
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts" };
+const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell" };
 
 const State = struct {
     page: usize = 0,
@@ -47,6 +47,10 @@ const State = struct {
     notes: [256]u8 = @splat(0),
     notes_len: usize = 0,
     notes_caret: usize = 0,
+    menu_open: ?usize = null,
+    doc_tab: usize = 0,
+    doc_closed: [3]bool = @splat(false),
+    last_pick: u32 = 0,
 };
 
 // ------------------------------------------------------------------ 页 0：显示与反馈
@@ -284,6 +288,70 @@ fn pageCharts(ui: *zzui.core.Context, st: *State) void {
     }
 }
 
+// ------------------------------------------------------------------ 页 4：应用外壳
+
+fn pageShell(ui: *zzui.core.Context, st: *State) void {
+    const file_items = [_]zzui.widgets.MenuItem{
+        .{ .label = "New" },
+        .{ .label = "Open..." },
+        .{ .label = "Save" },
+        .{ .label = "Close" },
+    };
+    const edit_items = [_]zzui.widgets.MenuItem{
+        .{ .label = "Undo" },
+        .{ .label = "Redo" },
+        .{ .label = "Cut", .enabled = false },
+    };
+    const help_items = [_]zzui.widgets.MenuItem{
+        .{ .label = "Documentation" },
+        .{ .label = "About ZZUI" },
+    };
+    const menus = [_]zzui.chrome.MenuDef{
+        .{ .label = "File", .items = file_items[0..] },
+        .{ .label = "Edit", .items = edit_items[0..] },
+        .{ .label = "Help", .items = help_items[0..] },
+    };
+
+    zzui.extras.muted(ui, "Menu bar");
+    if (zzui.chrome.menuBar(ui, "menubar", menus[0..], &st.menu_open, .{})) |pick| {
+        st.last_pick = @intCast(pick.menu * 100 + pick.item);
+    }
+
+    zzui.extras.muted(ui, "Toolbar");
+    zzui.chrome.toolbarBegin(ui, .{});
+    if (zzui.chrome.toolbarButton(ui, "New")) st.last_pick = 900;
+    if (zzui.chrome.toolbarButton(ui, "Open")) st.last_pick = 901;
+    if (zzui.chrome.toolbarButton(ui, "Save")) st.last_pick = 902;
+    zzui.chrome.toolbarSeparator(ui);
+    if (zzui.chrome.toolbarButton(ui, "Undo")) st.last_pick = 903;
+    if (zzui.chrome.toolbarButton(ui, "Redo")) st.last_pick = 904;
+    zzui.chrome.toolbarSpacer(ui, 24);
+    if (zzui.chrome.toolbarButton(ui, "Run")) st.last_pick = 905;
+    zzui.chrome.toolbarEnd(ui);
+
+    zzui.extras.muted(ui, "Document tabs");
+    const tabs = [_]zzui.chrome.DocTab{
+        .{ .label = "main.zig" },
+        .{ .label = "core.zig", .dirty = true },
+        .{ .label = "README.md" },
+    };
+    _ = zzui.chrome.docTabs(ui, "doctabs", tabs[0..], &st.doc_tab, .{});
+
+    zzui.extras.muted(ui, "Status bar");
+    const left = [_]zzui.chrome.StatusItem{ .{ .label = "Ready" }, .{ .label = "main.zig" } };
+    const right = [_]zzui.chrome.StatusItem{
+        .{ .label = "UTF-8" },
+        .{ .label = "Ln 12, Col 4" },
+        .{ .label = "Zig 0.17", .kind = .accent, .clickable = true },
+    };
+    if (zzui.chrome.statusBar(ui, "statusbar", left[0..], right[0..], .{})) |pick| {
+        st.last_pick = @intCast(1000 + pick.index);
+    }
+
+    zzui.extras.muted(ui, "Last action");
+    zzui.widgets.textInt(ui, "action id = ", st.last_pick, "");
+}
+
 // ------------------------------------------------------------------ 页面装配
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -291,7 +359,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     defer col.end();
 
     zzui.widgets.heading(ui, "Component gallery", 2);
-    zzui.widgets.secondary(ui, "50 components across six families. Switch pages with the tabs.");
+    zzui.widgets.secondary(ui, "59 components across seven families. Switch pages with the tabs.");
     zzui.controls.tabs(ui, "gallery-pages", page_names[0..], &st.page);
 
     var body = ui.scroll(.{ .id = "gallery-body", .height = ui.height - 190, .gap = 14 });
@@ -301,7 +369,8 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         0 => pageComponents(ui),
         1 => pageForms(ui, st),
         2 => pageData(ui, st),
-        else => pageCharts(ui, st),
+        3 => pageCharts(ui, st),
+        else => pageShell(ui, st),
     }
 }
 
@@ -333,6 +402,7 @@ fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-4")) return runShot(4);
     if (hasFlag(cmdline, "--shot-3")) return runShot(3);
     if (hasFlag(cmdline, "--shot-2")) return runShot(2);
     if (hasFlag(cmdline, "--shot-1")) return runShot(1);
