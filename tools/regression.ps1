@@ -106,11 +106,11 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     Check "render:exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
     $bmp = Join-Path $tmp 'zzui-hello.bmp'
     if (Test-Path $bmp) {
-        $expect = 54 + 420 * 300 * 4
+        $expect = 54 + 420 * 460 * 4
         Check "render:bmp-size" ((Get-Item $bmp).Length -eq $expect) ("bytes=" + (Get-Item $bmp).Length + " expect=" + $expect)
         $b = [IO.File]::ReadAllBytes($bmp)
-        $offBg = 54 + (300 - 1 - 0) * 420 * 4 + 0
-        $offBtn = 54 + (300 - 1 - 170) * 420 * 4 + 100 * 4
+        $offBg = 54 + (460 - 1 - 0) * 420 * 4 + 0
+        $offBtn = 54 + (460 - 1 - 170) * 420 * 4 + 100 * 4
         $bgOk = ($b[$offBg] -eq 255 -and $b[$offBg+1] -eq 255 -and $b[$offBg+2] -eq 255)
         $btnOk = ($b[$offBtn] -eq 0xEB -and $b[$offBtn+1] -eq 0x63 -and $b[$offBtn+2] -eq 0x25)
         Check "render:bg" $bgOk ("pixel(0,0)=" + $b[$offBg+2] + "," + $b[$offBg+1] + "," + $b[$offBg])
@@ -120,6 +120,37 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     }
 } else {
     Skip "render" "zzui-hello-x64.exe not found"
+}
+
+Write-Host "== 1.5 text render (--shot, Win32 GDI) =="
+if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
+    $tmp2 = Join-Path $env:TEMP 'zzui-regression'
+    if (-not (Test-Path $tmp2)) { New-Item -ItemType Directory -Path $tmp2 -Force | Out-Null }
+    Remove-Item (Join-Path $tmp2 'zzui-shot.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-hello-x64.exe') @('--shot') $tmp2
+    Check "shot:exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $shot = Join-Path $tmp2 'zzui-shot.bmp'
+    if (Test-Path $shot) {
+        $b = [IO.File]::ReadAllBytes($shot)
+        $sw = [BitConverter]::ToInt32($b, 18)
+        $sh = [BitConverter]::ToInt32($b, 22)
+        Check "shot:bmp" ($sw -gt 300 -and $sh -gt 300) ("size=" + $sw + "x" + $sh + " bytes=" + $b.Length)
+        # heading 区域应有深色字形像素（证明 GDI 文本真的画上了）
+        $dark = 0
+        $y0 = 20; $y1 = [Math]::Min(80, $sh)
+        $x0 = 24; $x1 = [Math]::Min(260, $sw)
+        for ($y = $y0; $y -lt $y1; $y++) {
+            for ($x = $x0; $x -lt $x1; $x++) {
+                $off = 54 + ($sh - 1 - $y) * $sw * 4 + $x * 4
+                if ($b[$off] -lt 100 -and $b[$off+1] -lt 100 -and $b[$off+2] -lt 100) { $dark++ }
+            }
+        }
+        Check "shot:text-pixels" ($dark -gt 100) ("dark=" + $dark)
+    } else {
+        Check "shot:bmp" $false "shot bmp not written"
+    }
+} else {
+    Skip "shot" "zzui-hello-x64.exe not found"
 }
 
 Write-Host "== 2. continuity =="

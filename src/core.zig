@@ -37,15 +37,26 @@ pub const TextCmd = struct {
     color: t.Color,
 };
 
+pub const LineCmd = struct {
+    from: t.Point,
+    to: t.Point,
+    width: f32,
+    color: t.Color,
+};
+
 pub const Command = union(enum) {
     rect: RectCmd,
     text: TextCmd,
+    line: LineCmd,
 };
 
 pub const MAX_NODES = 256;
 pub const MAX_COMMANDS = 512;
 pub const MAX_DEPTH = 12;
 pub const MAX_HITS = 128;
+pub const MAX_FOCUS = 64;
+pub const MAX_OVERLAYS = 64;
+pub const MAX_TEXT_POOL = 8192;
 
 const Frame = struct {
     node: ?usize = null,
@@ -85,6 +96,10 @@ pub const BoxOpts = struct {
 pub const Interaction = struct {
     hover: bool = false,
     clicked: bool = false,
+    focused: bool = false,
+    pressed: bool = false,
+    dragging: bool = false,
+    activated: bool = false,
 };
 
 pub const Scope = struct {
@@ -103,6 +118,9 @@ pub const Context = struct {
     node_count: usize = 0,
     cmds: [MAX_COMMANDS]Command = undefined,
     cmd_count: usize = 0,
+    /// 先于节点绘制？不：overlay 在节点之后绘制（勾、焦点环等）。
+    overlays: [MAX_OVERLAYS]Command = undefined,
+    overlay_count: usize = 0,
     stack: [MAX_DEPTH]Frame = undefined,
     depth: usize = 0,
     width: f32 = 0,
@@ -112,6 +130,15 @@ pub const Context = struct {
     hits_prev_n: usize = 0,
     hits_curr: [MAX_HITS]Hit = undefined,
     hits_curr_n: usize = 0,
+    focus_prev: [MAX_FOCUS]u64 = undefined,
+    focus_prev_n: usize = 0,
+    focus_curr: [MAX_FOCUS]u64 = undefined,
+    focus_curr_n: usize = 0,
+    focus_id: u64 = 0,
+    active_id: u64 = 0,
+    /// 帧内字符串池：控件里拼出来的文本（如数字）要拷进来，否则节点会持有失效的栈切片。
+    text_pool: [MAX_TEXT_POOL]u8 = undefined,
+    text_pool_len: usize = 0,
     measure_ctx: ?*anyopaque = null,
     measure_fn: *const fn (?*anyopaque, []const u8, f32) t.Size = defaultMeasure,
 
@@ -120,12 +147,32 @@ pub const Context = struct {
         self.hits_prev = self.hits_curr;
         self.hits_prev_n = self.hits_curr_n;
         self.hits_curr_n = 0;
+        self.focus_prev = self.focus_curr;
+        self.focus_prev_n = self.focus_curr_n;
+        self.focus_curr_n = 0;
         self.node_count = 0;
         self.cmd_count = 0;
+        self.overlay_count = 0;
+        self.text_pool_len = 0;
+        if (!self.input.down) self.active_id = 0;
+        if (self.input.keyPressed(.tab)) self.advanceFocus();
         self.width = width;
         self.height = height;
         self.stack[0] = .{ .node = null, .parent = 0, .dir = .column, .content_x = 0, .content_y = 0, .width = width };
         self.depth = 1;
+    }
+
+    fn advanceFocus(self: *Context) void {
+        if (self.focus_prev_n == 0) return;
+        var i: usize = 0;
+        while (i < self.focus_prev_n) : (i += 1) {
+            if (self.focus_prev[i] == self.focus_id) {
+                const next = (i + 1) % self.focus_prev_n;
+                self.focus_id = self.focus_prev[next];
+                return;
+            }
+        }
+        self.focus_id = self.focus_prev[0];
     }
 
     pub fn measureText(self: *Context, s: []const u8, size: f32) t.Size {
@@ -238,11 +285,21 @@ pub const Context = struct {
 
     /// 文本占位 + 文本节点。column 里撑满内容宽，row 里按测量宽度。
     pub fn textRun(self: *Context, s: []const u8, size: f32, color: t.Color) t.Rect {
-        const m = self.measureText(s, size);
+        const owned = self.frameStr(s);
+        const m = self.measureText(owned, size);
         const h = if (m.h > 0) m.h else size * 1.35;
         const rect = self.reserve(m.w, h, true);
-        self.addText(rect, s, size, color);
+        self.addText(rect, owned, size, color);
         return rect;
+    }
+
+    /// 把字符串拷进本帧的池子，保证节点里的 slice 直到绘制前都有效（对应 CUI 的 `cui__frame_strdup`）。
+    pub fn frameStr(self: *Context, s: []const u8) []const u8 {
+        if (self.text_pool_len + s.len > self.text_pool.len) return s;
+        const dst = self.text_pool[self.text_pool_len .. self.text_pool_len + s.len];
+        @memcpy(dst, s);
+        self.text_pool_len += s.len;
+        return dst;
     }
 
     /// 用字符宽度估算的数字文本（不引入 std.fmt，避免体积膨胀）。
@@ -286,12 +343,25 @@ pub const Context = struct {
     // ------------------------------------------------------------ 输入
     /// 对**上一帧**的矩形判定点击；同时记录本帧矩形供下一帧使用。
     pub fn interact(self: *Context, id: u64, rect: t.Rect) Interaction {
+        return self.interactEx(id, rect, false);
+    }
+
+    /// `focusable` 的控件会进入 Tab 顺序，并响应空格/回车激活。
+    pub fn interactEx(self: *Context, id: u64, rect: t.Rect, focusable: bool) Interaction {
+        if (focusable and self.focus_curr_n < MAX_FOCUS) {
+            self.focus_curr[self.focus_curr_n] = id;
+            self.focus_curr_n += 1;
+        }
         if (self.hits_curr_n < MAX_HITS) {
             self.hits_curr[self.hits_curr_n] = .{ .id = id, .rect = rect };
             self.hits_curr_n += 1;
         }
         var out = Interaction{};
         out.hover = rect.contains(self.input.mouse.x, self.input.mouse.y);
+        out.focused = focusable and self.focus_id == id;
+        if (self.input.pressed and out.hover) self.active_id = id;
+        out.dragging = self.active_id == id and self.input.down;
+        out.pressed = self.active_id == id and self.input.down;
         if (self.input.click) |p| {
             var i: usize = 0;
             while (i < self.hits_prev_n) : (i += 1) {
@@ -300,7 +370,9 @@ pub const Context = struct {
                     break;
                 }
             }
+            if (out.clicked) self.focus_id = id;
         }
+        out.activated = out.focused and (self.input.keyPressed(.space) or self.input.keyPressed(.enter));
         return out;
     }
 
@@ -316,7 +388,6 @@ pub const Context = struct {
 
     // ------------------------------------------------------------ 绘制
     pub fn paint(self: *Context) void {
-        self.cmd_count = 0;
         var i: usize = 0;
         while (i < self.node_count) : (i += 1) {
             const n = self.nodes[i];
@@ -332,6 +403,17 @@ pub const Context = struct {
                 },
             }
         }
+        i = 0;
+        while (i < self.overlay_count) : (i += 1) {
+            self.push(self.overlays[i]);
+        }
+    }
+
+    /// 覆盖层线段：在节点之后绘制（勾、焦点环等）。
+    pub fn addOverlayLine(self: *Context, from: t.Point, to: t.Point, width: f32, color: t.Color) void {
+        if (self.overlay_count >= MAX_OVERLAYS) return;
+        self.overlays[self.overlay_count] = .{ .line = .{ .from = from, .to = to, .width = width, .color = color } };
+        self.overlay_count += 1;
     }
 
     fn pushBorder(self: *Context, r: t.Rect, w: f32, c: t.Color) void {

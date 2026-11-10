@@ -8,6 +8,7 @@ pub const secondary = t.Color.hex(0x6B7280, 255);
 pub const surface = t.Color.hex(0xF3F4F6, 255);
 pub const border = t.Color.hex(0xD0D7DE, 255);
 pub const accent = t.Color.hex(0x2563EB, 255);
+pub const accent_active = t.Color.hex(0x1D4ED8, 255);
 pub const accent_text = t.Color.hex(0xFFFFFF, 255);
 pub const track = t.Color.hex(0xD9DEE5, 255);
 pub const hover_overlay = t.Color.hex(0x000000, 16);

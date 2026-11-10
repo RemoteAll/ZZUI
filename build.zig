@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const test_mod = b.createModule(.{
-        .root_source_file = b.path("src/core.zig"),
+        .root_source_file = b.path("src/tests.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
     });

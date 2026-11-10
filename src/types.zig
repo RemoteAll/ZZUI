@@ -43,10 +43,41 @@ pub const Direction = enum { row, column };
 
 pub const Variant = enum { primary, secondary, ghost };
 
+/// 与 Win32 虚拟键码对齐；其它平台后端映射到同一组值。
+pub const Key = enum(u8) {
+    unknown = 0,
+    tab = 9,
+    enter = 13,
+    space = 32,
+    left = 37,
+    up = 38,
+    right = 39,
+    down = 40,
+};
+
 /// 每帧输入快照。`click` 只在「按下并在同一控件内抬起」的那一帧出现在这里。
 pub const Input = struct {
     mouse: Point = .{},
     down: bool = false,
+    /// 本帧刚按下（用于建立鼠标捕获）。
+    pressed: bool = false,
     click: ?Point = null,
     quit: bool = false,
+    keys: [8]Key = @splat(.unknown),
+    key_count: u8 = 0,
+
+    pub fn addKey(self: *Input, k: Key) void {
+        if (self.key_count < self.keys.len) {
+            self.keys[self.key_count] = k;
+            self.key_count += 1;
+        }
+    }
+
+    pub fn keyPressed(self: Input, k: Key) bool {
+        var i: usize = 0;
+        while (i < self.key_count) : (i += 1) {
+            if (self.keys[i] == k) return true;
+        }
+        return false;
+    }
 };

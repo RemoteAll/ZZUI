@@ -20,8 +20,16 @@ pub const Backend = union(enum) {
         return .{ .null_backend = try null_backend.Backend.init(width, height) };
     }
 
-    pub fn initWin32(title: []const u8, width: u32, height: u32) !Backend {
-        return .{ .win32 = try win32_backend.Backend.init(title, width, height) };
+    pub fn initWin32(title: []const u8, width: u32, height: u32, show: bool) !Backend {
+        return .{ .win32 = try win32_backend.Backend.init(title, width, height, show) };
+    }
+
+    /// 把当前帧的像素缓冲写成 BMP（验证字体/图形用）。
+    pub fn saveSurface(self: *Backend, path: []const u8) !void {
+        switch (self.*) {
+            .win32 => |*b| try b.saveSurface(path),
+            .null_backend => |*b| try b.saveSurface(path),
+        }
     }
 
     pub fn deinit(self: *Backend) void {

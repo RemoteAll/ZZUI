@@ -6,6 +6,7 @@ const std = @import("std");
 const w = @import("../win32.zig");
 const t = @import("../types.zig");
 const core = @import("../core.zig");
+const bmpfile = @import("../bmpfile.zig");
 
 const WM_QUIT: u32 = 0x0012;
 const cls_main = std.unicode.utf8ToUtf16LeStringLiteral("ZZUIMain");
@@ -13,7 +14,10 @@ const face_ui = std.unicode.utf8ToUtf16LeStringLiteral("Microsoft YaHei UI");
 
 var g_mouse: t.Point = .{};
 var g_down: bool = false;
+var g_pressed: bool = false;
 var g_pending_click: ?t.Point = null;
+var g_keys: [8]u8 = @splat(0);
+var g_key_count: usize = 0;
 var g_quit: bool = false;
 var g_need_resize: bool = false;
 
@@ -33,7 +37,7 @@ pub const Backend = struct {
     input: t.Input = .{},
     fonts: [8]FontSlot = @splat(.{}),
 
-    pub fn init(title: []const u8, width: u32, height: u32) !Backend {
+    pub fn init(title: []const u8, width: u32, height: u32, show: bool) !Backend {
         _ = w.SetProcessDPIAware();
         const hinst = w.GetModuleHandleW(null) orelse return error.NoInstance;
 
@@ -66,8 +70,10 @@ pub const Backend = struct {
         var self = Backend{ .hwnd = hwnd };
         self.dpi = queryDpi(hwnd);
         self.createSurface();
-        _ = w.ShowWindow(hwnd, w.SW_SHOW);
-        _ = w.UpdateWindow(hwnd);
+        if (show) {
+            _ = w.ShowWindow(hwnd, w.SW_SHOW);
+            _ = w.UpdateWindow(hwnd);
+        }
         return self;
     }
 
@@ -93,6 +99,14 @@ pub const Backend = struct {
         }
         self.input.mouse = .{ .x = g_mouse.x / self.dpi, .y = g_mouse.y / self.dpi };
         self.input.down = g_down;
+        self.input.pressed = g_pressed;
+        g_pressed = false;
+        self.input.key_count = 0;
+        var ki: usize = 0;
+        while (ki < g_key_count) : (ki += 1) {
+            self.input.addKey(mapKey(g_keys[ki]));
+        }
+        g_key_count = 0;
         if (g_pending_click) |p| {
             self.input.click = .{ .x = p.x / self.dpi, .y = p.y / self.dpi };
             g_pending_click = null;
@@ -122,13 +136,19 @@ pub const Backend = struct {
         return self.bits[0..n];
     }
 
-    pub fn present(self: *Backend, ui: *core.Context) void {
-        const dc = self.hdc_mem orelse return;
+    /// 把当前 DIB 写成 BMP（含 GDI 文本），用于无人工干预的视觉校验。
+    pub fn saveSurface(self: *Backend, path: []const u8) !void {
+        if (self.px_w == 0 or self.px_h == 0) return error.NoSurface;
+        return bmpfile.saveBmp(path, self.pixels(), self.px_w, self.px_h);
+    }
+
+    pub fn present(self: *Backend, ui: *core.Context) void {        const dc = self.hdc_mem orelse return;
         var i: usize = 0;
         while (i < ui.cmd_count) : (i += 1) {
             switch (ui.cmds[i]) {
                 .text => |c| self.drawTextCmd(dc, c),
                 .rect => {},
+                .line => {},
             }
         }
         const wdc = w.GetDC(self.hwnd) orelse return;
@@ -136,8 +156,7 @@ pub const Backend = struct {
         _ = w.ReleaseDC(self.hwnd, wdc);
     }
 
-    pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {
-        const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
+    pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {        const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
         const font = self.fontFor(size_px) orelse return .{ .w = 0, .h = size_px * 1.35 };
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, s);
@@ -151,8 +170,7 @@ pub const Backend = struct {
         };
     }
 
-    fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {
-        const font = self.fontFor(c.size) orelse return;
+    fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {        const font = self.fontFor(c.size) orelse return;
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, c.text);
         const old = w.SelectObject(dc, font) orelse return;
@@ -165,8 +183,7 @@ pub const Backend = struct {
         _ = w.SelectObject(dc, old);
     }
 
-    fn fontFor(self: *Backend, size_px: f32) ?w.HFONT {
-        const weight: i32 = if (size_px >= 20) 600 else 400;
+    fn fontFor(self: *Backend, size_px: f32) ?w.HFONT {        const weight: i32 = if (size_px >= 20) 600 else 400;
         const key = size_px * 1000 + @as(f32, @floatFromInt(weight));
         for (&self.fonts) |*slot| {
             if (slot.font != null and slot.key == key) return slot.font;
@@ -220,6 +237,19 @@ fn mouseFrom(lp: w.LPARAM) t.Point {
     return .{ .x = @floatFromInt(w.loword(v)), .y = @floatFromInt(w.hiword(v)) };
 }
 
+fn mapKey(vk: u8) t.Key {
+    return switch (vk) {
+        9 => .tab,
+        13 => .enter,
+        32 => .space,
+        37 => .left,
+        38 => .up,
+        39 => .right,
+        40 => .down,
+        else => .unknown,
+    };
+}
+
 fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi) w.LRESULT {
     switch (msg) {
         w.WM_MOUSEMOVE => {
@@ -228,6 +258,7 @@ fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi)
         },
         w.WM_LBUTTONDOWN => {
             g_down = true;
+            g_pressed = true;
             g_mouse = mouseFrom(lp);
             return 0;
         },
@@ -240,6 +271,13 @@ fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi)
         },
         w.WM_SIZE => {
             g_need_resize = true;
+            return 0;
+        },
+        w.WM_KEYDOWN => {
+            if (g_key_count < g_keys.len) {
+                g_keys[g_key_count] = @truncate(wp);
+                g_key_count += 1;
+            }
             return 0;
         },
         w.WM_CLOSE => {

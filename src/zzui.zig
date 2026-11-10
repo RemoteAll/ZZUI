@@ -24,10 +24,11 @@ pub const App = struct {
         title: []const u8,
         width: u32 = 420,
         height: u32 = 300,
+        show: bool = true,
     };
 
     pub fn init(desc: Desc) !App {
-        return .{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height) };
+        return .{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height, desc.show) };
     }
 
     pub fn initHeadless(width: u32, height: u32) !App {
@@ -47,6 +48,11 @@ pub const App = struct {
         self.ui.input = self.backend.input().*;
         self.ui.begin(sz.w, sz.h);
         return true;
+    }
+
+    /// 把当前帧存成 BMP（验证字体/图形用；Win32 下含系统字体文本）。
+    pub fn saveSurface(self: *App, path: []const u8) !void {
+        return self.backend.saveSurface(path);
     }
 
     /// 结束一帧：生成绘制指令、软件光栅、呈现。
