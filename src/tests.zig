@@ -18,6 +18,7 @@ test {
     _ = @import("tests_dials.zig");
     _ = @import("tests_viz.zig");
     _ = @import("tests_grid.zig");
+    _ = @import("tests_dock.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

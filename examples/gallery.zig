@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar", "Viz", "Viz B", "Curves", "Grid" };
+const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar", "Viz", "Viz B", "Curves", "Grid", "Dock" };
 
 const State = struct {
     page: usize = 0,
@@ -139,6 +139,12 @@ const State = struct {
     filter_sel: [1]u32 = .{1},
     filter_search: [32]u8 = @splat(0),
     filter_state: zzui.grid.FilterBarState = .{},
+
+    // ---- 停靠页（程序坞 + 面板停靠）
+    dock_state: zzui.dock.DockState = .{},
+    dock_opened: ?usize = null,
+    ds_state: zzui.dockspace.DockspaceState = .{},
+    ds_open: [4]bool = .{ true, true, true, true },
 };
 
 // ------------------------------------------------------------------ 页 0：显示与反馈
@@ -807,6 +813,54 @@ fn pageGrid(ui: *zzui.core.Context, st: *State) void {
     zzui.widgets.textInt(ui, "selected = ", count, "");
 }
 
+// ------------------------------------------------------------------ 页 12：停靠
+
+fn pageDock(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Dock (hover magnifies the icon, click opens the app, badge + running dot)");
+    zzui.dock.dockBegin(ui, "gal-dock", &st.dock_state, .{ .size = 44, .magnify = 1.35 });
+    if (zzui.dock.dockItem(ui, "gal-dock", "F", "Finder", .{})) st.dock_opened = 0;
+    if (zzui.dock.dockItem(ui, "gal-dock", "T", "Terminal", .{ .running = true })) st.dock_opened = 1;
+    if (zzui.dock.dockItem(ui, "gal-dock", "M", "Mail", .{ .badge = 7 })) st.dock_opened = 2;
+    zzui.dock.dockSeparator(ui);
+    if (zzui.dock.dockItem(ui, "gal-dock", "X", "Trash", .{})) st.dock_opened = 3;
+    zzui.dock.dockEnd(ui);
+    if (st.dock_opened) |i| zzui.widgets.textInt(ui, "last opened = icon ", @intCast(i), "");
+
+    zzui.extras.muted(ui, "Dockspace (drag the splitters, click tabs, close with the tab x)");
+    zzui.dockspace.begin(ui, "gal-ds", &st.ds_state, .{ .height = 360, .min_w = 120, .min_h = 80 });
+    if (zzui.dockspace.panelBegin(ui, &st.ds_state, "Scene", &st.ds_open[0])) {
+        zzui.widgets.heading(ui, "Scene tree", 3);
+        zzui.widgets.text(ui, "- World");
+        zzui.widgets.text(ui, "  - Main Camera");
+        zzui.widgets.text(ui, "  - Directional Light");
+        zzui.dockspace.panelEnd(ui);
+    }
+    if (zzui.dockspace.panelBegin(ui, &st.ds_state, "Viewport", &st.ds_open[1])) {
+        zzui.widgets.heading(ui, "Viewport", 3);
+        zzui.extras.muted(ui, "Tab strip above switches panels; drag the splitter on the edge.");
+        zzui.extras.meter(ui, "GPU frame 13.9 ms", 0.72);
+        zzui.dockspace.panelEnd(ui);
+    }
+    if (zzui.dockspace.panelBegin(ui, &st.ds_state, "Console", &st.ds_open[2])) {
+        zzui.widgets.heading(ui, "Console", 3);
+        zzui.extras.muted(ui, "> zig build");
+        zzui.extras.muted(ui, "> build succeeded in 3.4s");
+        zzui.dockspace.panelEnd(ui);
+    }
+    if (zzui.dockspace.panelBegin(ui, &st.ds_state, "Inspector", &st.ds_open[3])) {
+        zzui.widgets.heading(ui, "Inspector", 3);
+        zzui.widgets.checkbox(ui, "Visible", &st.chip_a);
+        zzui.widgets.separator(ui);
+        zzui.widgets.slider(ui, "Opacity", &st.hi, 0, 300);
+        zzui.dockspace.panelEnd(ui);
+    }
+    var layout_buf: [256]u8 = @splat(0);
+    const ln = zzui.dockspace.save(&st.ds_state, &layout_buf);
+    zzui.extras.muted(ui, "saved layout:");
+    zzui.extras.code(ui, ui.frameStr(layout_buf[0..ln]));
+    zzui.dockspace.end(ui);
+}
+
 // ------------------------------------------------------------------ 页面装配
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -814,7 +868,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     defer col.end();
 
     zzui.widgets.heading(ui, "Component gallery", 2);
-    zzui.widgets.secondary(ui, "104 components across thirteen families. Switch pages with the tabs.");
+    zzui.widgets.secondary(ui, "113 components across fourteen families. Switch pages with the tabs.");
     zzui.controls.tabs(ui, "gallery-pages", page_names[0..], &st.page);
 
     var body = ui.scroll(.{ .id = "gallery-body", .height = ui.height - 190, .gap = 14 });
@@ -832,7 +886,8 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         8 => pageViz(ui, st),
         9 => pageVizB(ui, st),
         10 => pageCurves(ui, st),
-        else => pageGrid(ui, st),
+        11 => pageGrid(ui, st),
+        else => pageDock(ui, st),
     }
 }
 
@@ -864,6 +919,7 @@ fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-12")) return runShot(12);
     if (hasFlag(cmdline, "--shot-11")) return runShot(11);
     if (hasFlag(cmdline, "--shot-10")) return runShot(10);
     if (hasFlag(cmdline, "--shot-9")) return runShot(9);

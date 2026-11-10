@@ -185,8 +185,8 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
         Check "gallery:once-size" $false "bmp not written"
     }
 
-    # 4 页逐页真渲染：每页都要有文字像素（证明该页控件真的画了）
-    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) {
+    # 13 页逐页真渲染：每页都要有文字像素（证明该页控件真的画了）
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) {
         $bmp = Join-Path $tmp3 ("zzui-gallery-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @("--shot-$pg") $tmp3
