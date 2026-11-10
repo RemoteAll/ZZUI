@@ -1,0 +1,27 @@
+# ---- Zig 构建产物 ----
+.zig-cache/
+zig-cache/
+zig-out/
+*.pdb
+*.obj
+*.o
+*.lib
+*.ilk
+*.exp
+
+# ---- 程序运行产物 ----
+*.log
+*.ini.local
+
+# ---- 验证/打包产物（保留源码与脚本，不提交二进制与截图）----
+dist/
+artifacts/
+spike/out_*/
+spike/*.exe
+spike/*.png
+spike/*.res
+
+# ---- 编辑器/系统 ----
+.vscode/.browse*
+Thumbs.db
+desktop.ini
