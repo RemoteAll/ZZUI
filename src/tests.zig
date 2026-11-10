@@ -4,6 +4,7 @@ const core = @import("core.zig");
 const widgets = @import("widgets.zig");
 const extras = @import("extras.zig");
 const controls = @import("controls.zig");
+const overlay = @import("overlay.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
@@ -480,4 +481,166 @@ test "badge tone controls foreground color" {
     const bad = extras.toneColors(.danger);
     try std.testing.expect(ok.fg.g > ok.fg.r);
     try std.testing.expect(bad.fg.r > bad.fg.g);
+}
+
+// ---------------------------------------------------------------- 浮层族（overlay）
+
+test "toast auto dismisses after its ttl" {
+    var ui = core.Context{};
+    var open = true;
+    var since: f64 = -1;
+
+    ui.begin(400, 300);
+    try std.testing.expect(overlay.toast(&ui, "t", "Saved", &open, &since, .{ .ttl = 3 }));
+    ui.paint();
+    try std.testing.expectEqual(@as(f64, 0), since);
+    try std.testing.expectEqual(@as(u8, 1), ui.max_layer);
+
+    ui.time = 2;
+    ui.begin(400, 300);
+    try std.testing.expect(overlay.toast(&ui, "t", "Saved", &open, &since, .{ .ttl = 3 }));
+
+    ui.time = 5;
+    ui.begin(400, 300);
+    try std.testing.expect(!overlay.toast(&ui, "t", "Saved", &open, &since, .{ .ttl = 3 }));
+    try std.testing.expect(!open);
+}
+
+test "select opens on field click and records the picked item" {
+    var ui = core.Context{};
+    var idx: usize = 0;
+    var open = false;
+    const items = [_][]const u8{ "Apple", "Banana", "Cherry" };
+
+    ui.begin(400, 300);
+    const anchor = overlay.selectField(&ui, "s", items[0..], &idx, &open, .{});
+    ui.paint();
+    const field_id = core.Context.idOf("s") ^ 0x5E1EC7;
+    const fr = ui.lastRect(field_id) orelse return error.NoHit;
+    const fx = fr.x + fr.w / 2;
+    const fy = fr.y + fr.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = fx, .y = fy }, .click = .{ .x = fx, .y = fy } };
+    ui.begin(400, 300);
+    _ = overlay.selectField(&ui, "s", items[0..], &idx, &open, .{});
+    ui.paint();
+    try std.testing.expect(open);
+
+    // 弹层第 2 项（Banana）
+    const item_id = core.Context.idOf("s") ^ (0xA11CE + 1);
+    ui.input = .{};
+    ui.begin(400, 300);
+    _ = overlay.selectPopup(&ui, "s", anchor, items[0..], &idx, &open, .{});
+    ui.paint();
+    const ir = ui.lastRect(item_id) orelse return error.NoHit;
+    const ix = ir.x + ir.w / 2;
+    const iy = ir.y + ir.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = ix, .y = iy }, .click = .{ .x = ix, .y = iy } };
+    ui.begin(400, 300);
+    const changed = overlay.selectPopup(&ui, "s", anchor, items[0..], &idx, &open, .{});
+    ui.paint();
+    try std.testing.expect(changed);
+    try std.testing.expectEqual(@as(usize, 1), idx);
+    try std.testing.expect(!open);
+}
+
+test "command palette filters and returns the original index" {
+    var ui = core.Context{};
+    var open = true;
+    var buf: [64]u8 = @splat(0);
+    var len: usize = 0;
+    var caret: usize = 0;
+    const cmds = [_][]const u8{ "Build project", "Run tests", "Open settings" };
+    // 查询 "sett" 只应命中 "Open settings"（原下标 2）
+    const q = "sett";
+    @memcpy(buf[0..q.len], q);
+    len = q.len;
+
+    ui.begin(600, 400);
+    var picked: ?usize = overlay.commandPalette(&ui, "p", buf[0..], &len, &caret, cmds[0..], &open, .{});
+    ui.paint();
+    try std.testing.expectEqual(@as(?usize, null), picked);
+
+    const id = core.Context.idOf("p") ^ (0xF00D0000 + 2);
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(600, 400);
+    picked = overlay.commandPalette(&ui, "p", buf[0..], &len, &caret, cmds[0..], &open, .{});
+    ui.paint();
+
+    try std.testing.expectEqual(@as(?usize, 2), picked);
+    try std.testing.expect(!open);
+}
+
+test "popover closes when the backdrop is clicked" {
+    var ui = core.Context{};
+    var open = true;
+    const anchor = t.Rect{ .x = 40, .y = 40, .w = 100, .h = 30 };
+
+    ui.begin(400, 300);
+    try std.testing.expect(overlay.popoverBegin(&ui, "po", anchor, &open, .{}));
+    zzui_text(&ui);
+    overlay.popoverEnd(&ui);
+    ui.paint();
+
+    // next frame: click far away from the panel
+    ui.input = .{ .mouse = .{ .x = 380, .y = 280 }, .click = .{ .x = 380, .y = 280 } };
+    ui.begin(400, 300);
+    const still_open = overlay.popoverBegin(&ui, "po", anchor, &open, .{});
+    if (still_open) overlay.popoverEnd(&ui);
+    ui.paint();
+    try std.testing.expect(!still_open);
+    try std.testing.expect(!open);
+}
+
+fn zzui_text(ui: *core.Context) void {
+    _ = ui.textRun("Inside the popover", theme.font_body, theme.text);
+}
+
+test "context menu reports the picked item" {
+    var ui = core.Context{};
+    var open = true;
+    const at = t.Point{ .x = 50, .y = 60 };
+    const items = [_]widgets.MenuItem{ .{ .label = "Copy" }, .{ .label = "Paste" } };
+
+    ui.begin(400, 300);
+    _ = overlay.contextMenu(&ui, "cm", items[0..], &open, at);
+    ui.paint();
+    const id = core.Context.idOf("cm") ^ (0xA11CE + 1);
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 300);
+    const picked = overlay.contextMenu(&ui, "cm", items[0..], &open, at);
+    ui.paint();
+
+    try std.testing.expectEqual(@as(?usize, 1), picked);
+    try std.testing.expect(!open);
+}
+
+test "popover draws a panel and stays inside the window" {
+    var ui = core.Context{};
+    var open = true;
+    // 锚点在窗口外（滚动视口下方）：面板必须夹回窗口内
+    const anchor = t.Rect{ .x = 40, .y = 900, .w = 100, .h = 30 };
+
+    ui.begin(400, 300);
+    const before = ui.node_count;
+    try std.testing.expect(overlay.popoverBegin(&ui, "po2", anchor, &open, .{ .width = 200 }));
+    _ = ui.textRun("inside", theme.font_body, theme.text);
+    overlay.popoverEnd(&ui);
+    ui.paint();
+
+    try std.testing.expect(ui.node_count > before);
+    try std.testing.expectEqual(@as(u8, 1), ui.max_layer);
+    // 面板矩形（第一个节点）必须在窗口内
+    const panel = ui.nodes[before].rect;
+    try std.testing.expect(panel.x >= 0 and panel.x + panel.w <= 400);
+    try std.testing.expect(panel.y >= 0 and panel.y + panel.h <= 300);
 }

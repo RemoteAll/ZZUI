@@ -14,6 +14,19 @@ const State = struct {
     lo: f32 = 20,
     hi: f32 = 70,
     page: usize = 3,
+    select_idx: usize = 1,
+    select_open: bool = false,
+    popover_open: bool = false,
+    popover_anchor: zzui.types.Rect = .{},
+    ctx_open: bool = false,
+    ctx_at: zzui.types.Point = .{},
+    pal_open: bool = false,
+    pal_query: [64]u8 = @splat(0),
+    pal_len: usize = 0,
+    pal_caret: usize = 0,
+    toast_open: bool = true,
+    toast_since: f64 = -1,
+    select_anchor: zzui.types.Rect = .{},
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -126,19 +139,76 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         _ = zzui.controls.navItem(ui, "Reports", false);
         _ = zzui.controls.navItem(ui, "Settings", false);
     }
+
+    // ---------------------------------------------------------------- 浮层族
+    {
+        var card = zzui.extras.card(ui, .{});
+        defer card.end();
+        zzui.widgets.heading(ui, "Overlays", 3);
+        {
+            var row = ui.row(.{ .gap = 12 });
+            defer row.end();
+            st.select_anchor = zzui.overlay.selectField(ui, "fruit", &.{ "Apple", "Banana", "Cherry" }, &st.select_idx, &st.select_open, .{});
+            const pb = zzui.widgets.buttonEx(ui, "Popover", .{});
+            if (pb.clicked) st.popover_open = true;
+            st.popover_anchor = pb.rect;
+            if (zzui.widgets.button(ui, "Command palette", .{})) st.pal_open = true;
+        }
+        zzui.extras.muted(ui, "Right-click this line for a context menu.");
+
+        // 右键 → 上下文菜单
+        const hit_id = zzui.core.Context.idOf("ctx-area") ^ 0xC7C7;
+        const zone = ui.reserve(0, 26, true);
+        const it = ui.interactEx(hit_id, zone, false);
+        if (it.hover) ui.addBox(zone, .{ .fill = zzui.theme.surface, .radius = 6 });
+        if (ui.input.right_click) |p| {
+            if (zone.contains(p.x, p.y)) {
+                st.ctx_open = true;
+                st.ctx_at = p;
+            }
+        }
+    }
+}
+
+/// 浮层（菜单/浮框/命令面板/提示条）必须在页面内容之后构建。
+fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
+    _ = zzui.overlay.selectPopup(ui, "fruit", st.select_anchor, &.{ "Apple", "Banana", "Cherry" }, &st.select_idx, &st.select_open, .{});
+    if (zzui.overlay.popoverBegin(ui, "pop", st.popover_anchor, &st.popover_open, .{ .width = 220 })) {
+        zzui.widgets.heading(ui, "Popover", 3);
+        zzui.extras.muted(ui, "Anchored to the button, closes on outside click.");
+        if (zzui.widgets.button(ui, "Got it", .{ .variant = .primary })) st.popover_open = false;
+        zzui.overlay.popoverEnd(ui);
+    }
+    _ = zzui.overlay.commandPalette(ui, "pal", st.pal_query[0..], &st.pal_len, &st.pal_caret, &.{
+        "Build project",
+        "Run tests",
+        "Open settings",
+        "Toggle theme",
+        "Reload window",
+        "Show logs",
+    }, &st.pal_open, .{});
+    _ = zzui.overlay.contextMenu(ui, "ctx", &.{
+        .{ .label = "Copy" },
+        .{ .label = "Paste" },
+        .{ .label = "Delete" },
+    }, &st.ctx_open, st.ctx_at);
+    _ = zzui.overlay.toast(ui, "toast", "Saved to disk", &st.toast_open, &st.toast_since, .{ .kind = .success, .ttl = 0 });
 }
 
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
-    if (hasFlag(cmdline, "--shot-bottom")) return runShot(true);
-    if (hasFlag(cmdline, "--shot")) return runShot(false);
+    if (hasFlag(cmdline, "--shot-palette")) return runShot(3);
+    if (hasFlag(cmdline, "--shot-popover")) return runShot(2);
+    if (hasFlag(cmdline, "--shot-bottom")) return runShot(1);
+    if (hasFlag(cmdline, "--shot")) return runShot(0);
 
     var st = State{};
     var app = zzui.App.init(.{ .title = "ZZUI gallery", .width = 720, .height = 1000 }) catch return 1;
     defer app.deinit();
     while (app.next()) {
         build(&app.ui, &st);
+        buildOverlays(&app.ui, &st);
         app.end();
     }
     return 0;
@@ -150,28 +220,43 @@ fn runOnce() i32 {
     if (!app.next()) return 3;
     var st = State{};
     build(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
     app.end();
     zzui.bmpfile.saveBmp("zzui-gallery.bmp", app.backend.pixels(), 720, 1600) catch return 4;
     return 0;
 }
 
 /// 隐藏窗口真渲染（含系统字体文本）。
-/// `--shot` 拍顶部；`--shot-bottom` 先滚到底再拍（窗口高受屏幕限制，分两屏看完整）。
-fn runShot(bottom: bool) i32 {
+/// 0 = 顶部；1 = 滚到底；2 = 打开锚定浮层；3 = 打开命令面板。
+fn runShot(mode: u8) i32 {
     var app = zzui.App.init(.{ .title = "ZZUI gallery shot", .width = 720, .height = 1000, .show = false }) catch return 5;
     defer app.deinit();
     if (!app.next()) return 6;
     var st = State{};
-    if (bottom) {
-        app.ui.input = .{ .mouse = .{ .x = 300, .y = 500 }, .wheel = -60 };
-        build(&app.ui, &st);
-        app.end();
+
+    // 第一帧：记录锚点（popover 需要按钮矩形）；滚到底时浮层演示才在可视区内
+    if (mode == 1 or mode == 2) app.ui.input = .{ .mouse = .{ .x = 300, .y = 500 }, .wheel = -60 };
+    build(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
+    app.end();
+
+    if (mode == 1 or mode == 2 or mode == 3) {
         if (!app.next()) return 6;
         app.ui.input = .{ .mouse = .{ .x = 300, .y = 500 } };
+        if (mode == 2) st.popover_open = true;
+        if (mode == 3) st.pal_open = true;
+        build(&app.ui, &st);
+        buildOverlays(&app.ui, &st);
+        app.end();
     }
-    build(&app.ui, &st);
-    app.end();
-    app.saveSurface(if (bottom) "zzui-gallery-bottom.bmp" else "zzui-gallery-shot.bmp") catch return 7;
+
+    const name = switch (mode) {
+        1 => "zzui-gallery-bottom.bmp",
+        2 => "zzui-gallery-popover.bmp",
+        3 => "zzui-gallery-palette.bmp",
+        else => "zzui-gallery-shot.bmp",
+    };
+    app.saveSurface(name) catch return 7;
     return 0;
 }
 

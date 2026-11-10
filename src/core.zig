@@ -96,6 +96,8 @@ const Frame = struct {
     children: usize = 0,
     /// 绝对定位（浮层面板）：不推进父容器游标。
     absolute: bool = false,
+    /// 绝对面板的高度按内容确定（浮层弹框/提示不用预先估高度）。
+    auto_h: bool = false,
 };
 
 const Hit = struct {
@@ -151,6 +153,8 @@ pub const PanelOpts = struct {
     pad: f32 = 0,
     gap: f32 = 0,
     dir: t.Direction = .column,
+    /// 高度由内容决定（`rect.h` 被忽略），浮层弹框用。
+    auto_height: bool = false,
 };
 
 pub const OverlayOpts = struct {
@@ -372,7 +376,13 @@ pub const Context = struct {
         if (self.depth <= 1) return;
         self.depth -= 1;
         const f = self.stack[self.depth];
-        if (f.absolute) return; // 绝对面板保留给定矩形，不推进父容器游标
+        if (f.absolute) {
+            // 绝对面板保留给定矩形，不推进父容器游标；auto_h 时按内容补高度
+            if (f.auto_h) {
+                if (f.node) |n| self.nodes[n].rect.h = f.cursor + f.pad * 2;
+            }
+            return;
+        }
         const main = f.cursor;
         const rect = switch (f.dir) {
             .column => t.Rect{
@@ -555,6 +565,16 @@ pub const Context = struct {
         return self.overlay_backdrop_clicked;
     }
 
+    /// 结束当前浮层（不依赖 `OverlayScope` 的场景，如 `overlay.zig` 的 begin/end 对）。
+    pub fn endOverlay(self: *Context) void {
+        if (self.overlay_layer > 0) self.overlay_layer -= 1;
+    }
+
+    /// 结束当前绝对定位面板（`panel()` 的配对调用）。
+    pub fn endPanel(self: *Context) void {
+        self.close();
+    }
+
     /// 本帧已登记的命中矩形（控件建完即可查询，供菜单/浮层定位）。
     pub fn lastRect(self: *Context, id: u64) ?t.Rect {
         var i: usize = 0;
@@ -609,6 +629,7 @@ pub const Context = struct {
             .pad = opts.pad,
             .gap = opts.gap,
             .absolute = true,
+            .auto_h = opts.auto_height,
         };
         self.depth += 1;
         return .{ .ui = self };

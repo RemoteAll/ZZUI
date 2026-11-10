@@ -69,6 +69,8 @@ pub const Input = struct {
     /// 本帧滚轮增量（正数向上）。
     wheel: f32 = 0,
     click: ?Point = null,
+    /// 本帧右键释放的位置（上下文菜单用；Win32 WM_RBUTTONUP）。
+    right_click: ?Point = null,
     quit: bool = false,
     keys: [8]Key = @splat(.unknown),
     key_count: u8 = 0,

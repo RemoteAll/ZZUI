@@ -16,6 +16,7 @@ var g_mouse: t.Point = .{};
 var g_down: bool = false;
 var g_pressed: bool = false;
 var g_pending_click: ?t.Point = null;
+var g_pending_right: ?t.Point = null;
 var g_keys: [8]u8 = @splat(0);
 var g_key_count: usize = 0;
 var g_chars: [64]u8 = @splat(0);
@@ -121,6 +122,15 @@ pub const Backend = struct {
         if (g_pending_click) |p| {
             self.input.click = .{ .x = p.x / self.dpi, .y = p.y / self.dpi };
             g_pending_click = null;
+        } else {
+            // 点击是「本帧事件」：不残留，否则同一位置会每帧重复命中
+            self.input.click = null;
+        }
+        if (g_pending_right) |p| {
+            self.input.right_click = .{ .x = p.x / self.dpi, .y = p.y / self.dpi };
+            g_pending_right = null;
+        } else {
+            self.input.right_click = null;
         }
         if (g_need_resize) {
             g_need_resize = false;
@@ -330,6 +340,12 @@ fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi)
             const p = mouseFrom(lp);
             g_mouse = p;
             g_pending_click = p;
+            return 0;
+        },
+        w.WM_RBUTTONUP => {
+            const p = mouseFrom(lp);
+            g_mouse = p;
+            g_pending_right = p;
             return 0;
         },
         w.WM_SIZE => {

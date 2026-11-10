@@ -24,6 +24,7 @@ pub const Backend = struct {
 
     pub fn poll(self: *Backend) bool {
         self.frames += 1;
+        _ = &self;
         return self.frames <= 1;
     }
 

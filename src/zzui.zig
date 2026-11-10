@@ -13,6 +13,7 @@ pub const theme = @import("theme.zig");
 pub const widgets = @import("widgets.zig");
 pub const extras = @import("extras.zig");
 pub const controls = @import("controls.zig");
+pub const overlay = @import("overlay.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");

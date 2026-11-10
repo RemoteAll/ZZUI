@@ -192,6 +192,21 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     } else {
         Check "gallery:shot-text" $false "shot bmp not written"
     }
+    Remove-Item (Join-Path $tmp3 'zzui-gallery-palette.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--shot-palette') $tmp3
+    Check "gallery:palette-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $gp = Join-Path $tmp3 'zzui-gallery-palette.bmp'
+    if (Test-Path $gp) {
+        $q = [IO.File]::ReadAllBytes($gp)
+        $pw = [BitConverter]::ToInt32($q, 18)
+        $ph = [BitConverter]::ToInt32($q, 22)
+        # 命令面板有全窗口遮罩：左上角必须被压暗（未压暗时是 255）
+        $offc = 54 + ($ph - 1 - 4) * $pw * 4 + 4 * 4
+        $dimmed = $q[$offc + 2]
+        Check "gallery:palette-dim" ($dimmed -lt 220) ("corner=" + $dimmed + " size=" + $pw + "x" + $ph)
+    } else {
+        Check "gallery:palette-dim" $false "palette bmp not written"
+    }
 } else {
     Skip "gallery" "zzui-gallery-x64.exe not found"
 }
