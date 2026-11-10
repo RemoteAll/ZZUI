@@ -17,6 +17,7 @@ pub const controls = @import("controls.zig");
 pub const overlay = @import("overlay.zig");
 pub const textedit = @import("textedit.zig");
 pub const table = @import("table.zig");
+pub const grid = @import("grid.zig");
 pub const charts = @import("charts.zig");
 pub const chrome = @import("chrome.zig");
 pub const disclosure = @import("disclosure.zig");

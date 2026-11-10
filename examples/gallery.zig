@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar", "Viz", "Viz B", "Curves" };
+const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar", "Viz", "Viz B", "Curves", "Grid" };
 
 const State = struct {
     page: usize = 0,
@@ -114,6 +114,31 @@ const State = struct {
         .{ .t = 0, .color = zzui.types.Color.transparent },
         .{ .t = 0, .color = zzui.types.Color.transparent },
     },
+
+    // ---- 网格页
+    grid_sel: [4]bool = .{ false, true, false, false },
+    grid_state: zzui.grid.GridState = .{},
+    grid_sort: zzui.grid.GridSort = .{},
+    grid_bufs: [4][32]u8 = .{
+        .{ 'a', 'l', 'p', 'h', 'a' } ++ @as([27]u8, @splat(0)),
+        .{ 'b', 'e', 't', 'a' } ++ @as([28]u8, @splat(0)),
+        .{ 'g', 'a', 'm', 'm', 'a' } ++ @as([27]u8, @splat(0)),
+        .{ 'd', 'e', 'l', 't', 'a' } ++ @as([27]u8, @splat(0)),
+    },
+    grid_lens: [4]usize = .{ 5, 4, 5, 5 },
+    tree_nodes: [6]zzui.grid.TreeNode = .{
+        .{ .parent = -1, .first_child = 1, .next_sibling = 5, .flags = zzui.grid.TreeFlag.expanded },
+        .{ .parent = 0, .first_child = 2, .next_sibling = -1 },
+        .{ .parent = 1, .first_child = -1, .next_sibling = 3 },
+        .{ .parent = 1, .first_child = -1, .next_sibling = 4 },
+        .{ .parent = 1, .first_child = -1, .next_sibling = -1 },
+        .{ .parent = -1, .first_child = -1, .next_sibling = -1 },
+    },
+    tree_state: zzui.grid.TreeTableState = .{},
+    path_state: zzui.grid.PathBarState = .{},
+    filter_sel: [1]u32 = .{1},
+    filter_search: [32]u8 = @splat(0),
+    filter_state: zzui.grid.FilterBarState = .{},
 };
 
 // ------------------------------------------------------------------ 页 0：显示与反馈
@@ -699,6 +724,89 @@ fn pageCurves(ui: *zzui.core.Context, st: *State) void {
     }
 }
 
+// ------------------------------------------------------------------ 页 11：数据网格 / 树表 / 面包屑 / 筛选条
+
+const grid_cols = [_]zzui.grid.GridColumn{
+    .{ .title = "Name", .width = 160, .sortable = true },
+    .{ .title = "Kind", .width = 0 },
+    .{ .title = "Size", .width = 90, .text_align = .end, .sortable = true },
+    .{ .title = "Owner", .width = 120, .priority = 1 },
+};
+
+const grid_rows = [_][3][]const u8{
+    .{ "alpha", "file", "12 KB" },
+    .{ "beta", "folder", "--" },
+    .{ "gamma", "file", "4 MB" },
+    .{ "delta", "link", "512 B" },
+};
+
+fn treeLabel2(_: []const zzui.grid.TreeNode, i: usize) []const u8 {
+    return switch (i) {
+        0 => "src",
+        1 => "widgets",
+        2 => "button.zig",
+        3 => "input.zig",
+        4 => "slider.zig",
+        5 => "README.md",
+        else => "?",
+    };
+}
+
+fn pageGrid(ui: *zzui.core.Context, st: *State) void {
+    const segments = [_][]const u8{ "root", "src", "widgets" };
+
+    zzui.extras.muted(ui, "Path bar (click a segment; click the last one or empty space to type)");
+    _ = zzui.grid.pathBar(ui, "pb", segments[0..], &st.path_state, .{ .icon = ">" });
+
+    zzui.extras.muted(ui, "Filter bar");
+    const opt_status = [_][]const u8{ "open", "closed" };
+    const fields = [_]zzui.grid.FilterField{.{ .name = "Status", .options = opt_status[0..] }};
+    _ = zzui.grid.filterBar(ui, "fb", fields[0..], st.filter_sel[0..], &st.filter_search, &st.filter_state, 620);
+
+    zzui.extras.muted(ui, "Data grid (drag column edges, Shift+click a cell to edit, Ctrl/Shift click rows)");
+    if (zzui.grid.dataGridBegin(ui, "dg", grid_cols[0..], grid_rows.len, st.grid_sel[0..], &st.grid_state, .{
+        .checkboxes = true,
+        .sort = &st.grid_sort,
+        .height = 200,
+    })) {
+        for (grid_rows, 0..) |row_data, i| {
+            if (zzui.grid.dataGridRow(ui, i)) |row| {
+                const cell0 = row.cell(0);
+                if (st.grid_state.editing_row == @as(i32, @intCast(i)) and st.grid_state.editing_col == 0) {
+                    _ = row.edit(0, &st.grid_bufs[i], &st.grid_lens[i]);
+                } else {
+                    row.text(0, st.grid_bufs[i][0..st.grid_lens[i]], zzui.theme.text);
+                    // 给可编辑单元格留出命中区（Shift+点击进入编辑）
+                    _ = row.edit(0, &st.grid_bufs[i], &st.grid_lens[i]);
+                }
+                row.text(1, row_data[1], zzui.theme.secondary);
+                row.text(2, row_data[2], zzui.theme.secondary);
+                row.text(3, "ops", zzui.theme.secondary);
+                _ = cell0;
+            }
+        }
+        zzui.grid.dataGridEnd(ui);
+    }
+
+    zzui.extras.muted(ui, "Tree table (click a triangle to expand)");
+    if (zzui.grid.treeTableBegin(ui, "tt", grid_cols[0..], st.tree_nodes[0..], &st.tree_state, .{
+        .labelFn = treeLabel2,
+        .height = 180,
+    })) {
+        while (zzui.grid.treeTableRow(ui, &st.tree_state)) |ni| {
+            _ = ni;
+        }
+        zzui.grid.treeTableEnd(ui);
+    }
+
+    zzui.extras.muted(ui, "Selected rows");
+    var count: u32 = 0;
+    for (st.grid_sel) |v| {
+        if (v) count += 1;
+    }
+    zzui.widgets.textInt(ui, "selected = ", count, "");
+}
+
 // ------------------------------------------------------------------ 页面装配
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -706,7 +814,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     defer col.end();
 
     zzui.widgets.heading(ui, "Component gallery", 2);
-    zzui.widgets.secondary(ui, "93 components across twelve families. Switch pages with the tabs.");
+    zzui.widgets.secondary(ui, "104 components across thirteen families. Switch pages with the tabs.");
     zzui.controls.tabs(ui, "gallery-pages", page_names[0..], &st.page);
 
     var body = ui.scroll(.{ .id = "gallery-body", .height = ui.height - 190, .gap = 14 });
@@ -723,7 +831,8 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         7 => pageCalendar(ui, st),
         8 => pageViz(ui, st),
         9 => pageVizB(ui, st),
-        else => pageCurves(ui, st),
+        10 => pageCurves(ui, st),
+        else => pageGrid(ui, st),
     }
 }
 
@@ -755,6 +864,7 @@ fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-11")) return runShot(11);
     if (hasFlag(cmdline, "--shot-10")) return runShot(10);
     if (hasFlag(cmdline, "--shot-9")) return runShot(9);
     if (hasFlag(cmdline, "--shot-8")) return runShot(8);
