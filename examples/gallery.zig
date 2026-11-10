@@ -27,6 +27,10 @@ const State = struct {
     toast_open: bool = true,
     toast_since: f64 = -1,
     select_anchor: zzui.types.Rect = .{},
+    sort: zzui.table.SortState = .{},
+    table_sel: ?usize = null,
+    tree_sel: ?usize = null,
+    tree_open: [4]bool = @splat(true),
     pwd: [64]u8 = @splat(0),
     pwd_len: usize = 0,
     pwd_caret: usize = 0,
@@ -188,6 +192,75 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         _ = zzui.textedit.search(ui, "q", st.q[0..], &st.q_len, &st.q_caret, .{ .placeholder = "Search components" });
         _ = zzui.textedit.number(ui, "num", &st.amount, .{ .label = "Quantity", .min = 0, .max = 20, .step = 1, .suffix = "pcs" });
         _ = zzui.textedit.textarea(ui, "ta", st.notes[0..], &st.notes_len, &st.notes_caret, .{ .rows = 3, .placeholder = "Notes..." });
+    }
+
+    // ---------------------------------------------------------------- 表格族
+    {
+        var card = zzui.extras.card(ui, .{});
+        defer card.end();
+        zzui.widgets.heading(ui, "Tables", 3);
+
+        const cols = [_]zzui.table.Column{
+            .{ .label = "Service", .width = 0 },
+            .{ .label = "Status", .width = 96 },
+            .{ .label = "Latency", .width = 88, .text_align = .end, .sortable = true },
+        };
+        const data = [_][3][]const u8{
+            .{ "api-gateway", "running", "18 ms" },
+            .{ "auth-service", "running", "24 ms" },
+            .{ "billing", "degraded", "310 ms" },
+            .{ "search", "running", "42 ms" },
+            .{ "worker-1", "stopped", "-" },
+            .{ "worker-2", "running", "55 ms" },
+        };
+        {
+            // 表格作用域必须用块限定：`end()` 之前的构建都属于表格内部
+            var tbl = zzui.table.begin(ui, "svc", cols[0..], &st.sort, .{ .height = 4 * 32 });
+            defer tbl.end();
+            for (data, 0..) |cells, i| {
+                var r = tbl.row(i, st.table_sel != null and st.table_sel.? == i);
+                r.text(0, cells[0], zzui.theme.text);
+                r.text(1, cells[1], if (std.mem.eql(u8, cells[1], "running")) zzui.theme.success else if (std.mem.eql(u8, cells[1], "degraded")) zzui.theme.warn else zzui.theme.danger);
+                r.text(2, cells[2], zzui.theme.secondary);
+                if (r.clicked) st.table_sel = if (st.table_sel != null and st.table_sel.? == i) null else i;
+            }
+        }
+
+        zzui.widgets.heading(ui, "Tree table", 3);
+        const tcols = [_]zzui.table.Column{ .{ .label = "Path", .width = 0 }, .{ .label = "Size", .width = 90, .text_align = .end } };
+        const nodes = [_]struct { depth: u8, has: bool, label: []const u8, size: []const u8 }{
+            .{ .depth = 0, .has = true, .label = "src", .size = "" },
+            .{ .depth = 1, .has = false, .label = "core.zig", .size = "12 KB" },
+            .{ .depth = 1, .has = true, .label = "widgets", .size = "" },
+            .{ .depth = 2, .has = false, .label = "button.zig", .size = "4 KB" },
+        };
+        {
+            var tree = zzui.table.begin(ui, "tree", tcols[0..], &st.sort, .{ .height = 4 * 32 + 8 });
+            defer tree.end();
+            for (nodes, 0..) |node, i| {
+                const visible = switch (i) {
+                    0 => true,
+                    1, 2 => st.tree_open[0],
+                    else => st.tree_open[0] and st.tree_open[1],
+                };
+                if (!visible) continue;
+                var tn = zzui.table.TreeRow{
+                    .depth = node.depth,
+                    .has_children = node.has,
+                    .expanded = if (i == 0) st.tree_open[0] else st.tree_open[1],
+                };
+                const res = zzui.table.treeRow(&tree, i, &tn, node.label, st.tree_sel != null and st.tree_sel.? == i);
+                if (res.toggled) {
+                    if (i == 0) {
+                        st.tree_open[0] = tn.expanded;
+                    } else {
+                        st.tree_open[1] = tn.expanded;
+                    }
+                }
+                if (node.size.len > 0) res.row.text(1, node.size, zzui.theme.secondary);
+                if (res.row.clicked and !res.toggled) st.tree_sel = i;
+            }
+        }
     }
 }
 

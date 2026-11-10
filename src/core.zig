@@ -260,6 +260,12 @@ pub const Context = struct {
     /// 滚动状态跨帧保留（不进 begin 重置）。
     scrolls: [MAX_SCROLLS]ScrollState = @splat(.{}),
     scroll_n: usize = 0,
+    /// 上一帧确定的「最内层悬停滚动区」（滚轮只给它）。
+    wheel_target: u64 = 0,
+    /// 本帧登记的最内层滚动区（下次 begin 时生效）。
+    wheel_target_next: u64 = 0,
+    /// 本帧滚轮是否已被某个滚动区消费。
+    wheel_used: bool = false,
     /// 悬停开始时间（tooltip 用），跨帧保留。
     tips: [MAX_TIPS]TipState = @splat(.{}),
     tip_n: usize = 0,
@@ -287,6 +293,9 @@ pub const Context = struct {
         self.overlay_backdrop_clicked = false;
         self.max_layer = 0;
         self.clip = null;
+        self.wheel_target = self.wheel_target_next;
+        self.wheel_target_next = 0;
+        self.wheel_used = false;
         if (!self.input.down) self.active_id = 0;
         if (self.input.keyPressed(.tab)) self.advanceFocus();
         // 点击归属：上一帧命中里，包含点击点且层号最高（同层后者胜）的那个。
@@ -584,6 +593,15 @@ pub const Context = struct {
         return null;
     }
 
+    /// 上一帧该 id 的命中矩形（滚动区 hover 判定用：输入一律对上一帧判定）。
+    pub fn prevHitRect(self: *Context, id: u64) ?t.Rect {
+        var i: usize = 0;
+        while (i < self.hits_prev_n) : (i += 1) {
+            if (self.hits_prev[i].id == id) return self.hits_prev[i].rect;
+        }
+        return null;
+    }
+
     /// 悬停计时（tooltip 用）：返回该 id 的首次悬停时间，首次调用时记录当前时间。
     pub fn hoverStart(self: *Context, id: u64) f64 {
         var i: usize = 0;
@@ -709,15 +727,37 @@ pub const Context = struct {
         return &self.scrolls[self.scroll_n - 1];
     }
 
+    /// 某滚动区当前偏移（供虚拟列表与测试查询）。
+    pub fn scrollOffset(self: *Context, id: []const u8) f32 {
+        const key = Context.idOf(id);
+        var i: usize = 0;
+        while (i < self.scroll_n) : (i += 1) {
+            if (self.scrolls[i].id == key) return self.scrolls[i].offset;
+        }
+        return 0;
+    }
+
     /// 滚动视口：滚轮滚动、子节点裁剪到视口，结束时画滚动条。
     pub fn scroll(self: *Context, opts: ScrollOpts) ScrollScope {
         const rect = self.reserve(0, opts.height, true);
         const id = Context.idOf(opts.id);
         const st = self.scrollState(id);
         const hit = self.interactEx(id ^ 0x5C011, rect, false);
-        if (hit.hover and self.input.wheel != 0) {
+        // 滚轮：用**上一帧**矩形判 hover（嵌套滚动区才不会因为父滚动刚把内容移到自己下方就抢走滚轮）；
+        // 并且一帧只让一个滚动区消费滚轮（最内层优先：子节点后构建，登记会覆盖父）。
+        const prev = self.prevHitRect(id ^ 0x5C011) orelse rect;
+        const over_prev = prev.contains(self.input.mouse.x, self.input.mouse.y);
+        if (over_prev) self.wheel_target_next = id;
+        const wheel_allowed = !self.wheel_used and (self.wheel_target == 0 or self.wheel_target == id);
+        if (over_prev and wheel_allowed and self.input.wheel != 0) {
             st.offset -= self.input.wheel * 32;
             if (st.offset < 0) st.offset = 0;
+            self.wheel_used = true;
+        } else if (hit.hover and wheel_allowed and self.wheel_target == id and self.input.wheel != 0) {
+            // 首帧没有上一帧矩形时也能滚（否则鼠标首次进入得等一帧）
+            st.offset -= self.input.wheel * 32;
+            if (st.offset < 0) st.offset = 0;
+            self.wheel_used = true;
         }
 
         const old_clip = self.clip;

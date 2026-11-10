@@ -6,6 +6,7 @@ const extras = @import("extras.zig");
 const controls = @import("controls.zig");
 const overlay = @import("overlay.zig");
 const textedit = @import("textedit.zig");
+const table = @import("table.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
@@ -778,4 +779,156 @@ test "number steps and clamps to its range" {
     ui.paint();
     try std.testing.expect(!changed2);
     try std.testing.expectEqual(@as(f32, 20), value);
+}
+// ---------------------------------------------------------------- 表格族（table）
+
+test "table row reports clicks and cell slices follow column widths" {
+    var ui = core.Context{};
+    var sort = table.SortState{};
+    const cols = [_]table.Column{
+        .{ .label = "Name", .width = 0 },
+        .{ .label = "Size", .width = 80, .text_align = .end },
+    };
+
+    ui.begin(400, 300);
+    var tbl = table.begin(&ui, "t1", cols[0..], &sort, .{});
+    var r0 = tbl.row(0, false);
+    r0.text(0, "alpha", theme.text);
+    r0.text(1, "12 KB", theme.secondary);
+    tbl.end();
+    ui.paint();
+
+    // 列宽：弹性列吃剩余（400 - 80 = 320）
+    const c0 = r0.cell(0);
+    const c1 = r0.cell(1);
+    try std.testing.expectApproxEqAbs(@as(f32, 320), c0.w, 1);
+    try std.testing.expectApproxEqAbs(@as(f32, 80), c1.w, 1);
+    try std.testing.expectApproxEqAbs(c0.x + c0.w, c1.x, 0.01);
+
+    // 点击第二行
+    const row_id = core.Context.idOf("t1") ^ (0x1200 + 1);
+    ui.begin(400, 300);
+    tbl = table.begin(&ui, "t1", cols[0..], &sort, .{});
+    _ = tbl.row(0, false);
+    var r1 = tbl.row(1, false);
+    r1.text(0, "beta", theme.text);
+    tbl.end();
+    ui.paint();
+    const rr = ui.lastRect(row_id) orelse return error.NoHit;
+    const mx = rr.x + 40;
+    const my = rr.y + rr.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 300);
+    tbl = table.begin(&ui, "t1", cols[0..], &sort, .{});
+    _ = tbl.row(0, false);
+    const clicked_row = tbl.row(1, false);
+    tbl.end();
+    ui.paint();
+
+    try std.testing.expect(clicked_row.clicked);
+}
+
+test "sortable header toggles sort state" {
+    var ui = core.Context{};
+    var sort = table.SortState{};
+    const cols = [_]table.Column{
+        .{ .label = "Name", .width = 120 },
+        .{ .label = "Latency", .width = 100, .sortable = true },
+    };
+
+    ui.begin(400, 300);
+    var tbl = table.begin(&ui, "t2", cols[0..], &sort, .{});
+    tbl.end();
+    ui.paint();
+    const hdr_id = core.Context.idOf("t2") ^ (0x1100 + 1);
+    const hr = ui.lastRect(hdr_id) orelse return error.NoHit;
+    const hx = hr.x + hr.w / 2;
+    const hy = hr.y + hr.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = hx, .y = hy }, .click = .{ .x = hx, .y = hy } };
+    ui.begin(400, 300);
+    tbl = table.begin(&ui, "t2", cols[0..], &sort, .{});
+    tbl.end();
+    ui.paint();
+    try std.testing.expectEqual(@as(?usize, 1), sort.column);
+    try std.testing.expect(!sort.desc);
+
+    // 再点一次：同一列变降序
+    ui.input = .{ .mouse = .{ .x = hx, .y = hy }, .click = .{ .x = hx, .y = hy } };
+    ui.begin(400, 300);
+    tbl = table.begin(&ui, "t2", cols[0..], &sort, .{});
+    tbl.end();
+    ui.paint();
+    try std.testing.expectEqual(@as(?usize, 1), sort.column);
+    try std.testing.expect(sort.desc);
+}
+
+test "tree twisty toggles expansion without selecting the row" {
+    var ui = core.Context{};
+    var sort = table.SortState{};
+    const cols = [_]table.Column{.{ .label = "Path", .width = 0 }};
+
+    ui.begin(400, 300);
+    var tbl = table.begin(&ui, "t3", cols[0..], &sort, .{});
+    var node = table.TreeRow{ .depth = 0, .has_children = true, .expanded = true };
+    _ = table.treeRow(&tbl, 0, &node, "src", false);
+    tbl.end();
+    ui.paint();
+
+    // 三角点击区：第一列内边距 + 缩进处（18×18）
+    const tw_id = core.Context.idOf("t3") ^ 0x1300;
+    const tw = ui.lastRect(tw_id) orelse return error.NoHit;
+    const tx = tw.x + tw.w / 2;
+    const ty = tw.y + tw.h / 2;
+
+    const selected: ?usize = null;
+    ui.input = .{ .mouse = .{ .x = tx, .y = ty }, .click = .{ .x = tx, .y = ty } };
+    ui.begin(400, 300);
+    tbl = table.begin(&ui, "t3", cols[0..], &sort, .{});
+    node = .{ .depth = 0, .has_children = true, .expanded = true };
+    const res = table.treeRow(&tbl, 0, &node, "src", false);
+    tbl.end();
+    ui.paint();
+
+    try std.testing.expect(res.toggled);
+    try std.testing.expect(!node.expanded);
+    try std.testing.expectEqual(@as(?usize, null), selected);
+}
+
+test "wheel scrolls only the innermost scroll view" {
+    var ui = core.Context{};
+
+    const build = struct {
+        fn run(u: *core.Context) void {
+            var page = u.scroll(.{ .id = "page", .height = 120, .gap = 0 });
+            var k: usize = 0;
+            while (k < 4) : (k += 1) _ = u.textRun("page row", theme.font_body, theme.text);
+            var inner = u.scroll(.{ .id = "inner", .height = 100, .gap = 0 });
+            k = 0;
+            while (k < 10) : (k += 1) _ = u.textRun("inner row", theme.font_body, theme.text);
+            inner.end();
+            page.end();
+        }
+    };
+
+    // 第 1 帧：鼠标在内层滚动区（上一帧无命中 → 外层消费滚轮）
+    ui.input = .{ .mouse = .{ .x = 100, .y = 100 }, .wheel = -1 };
+    ui.begin(400, 300);
+    build.run(&ui);
+    ui.paint();
+    const page1 = ui.scrollOffset("page");
+    const inner1 = ui.scrollOffset("inner");
+    try std.testing.expect(page1 > 0);
+    try std.testing.expectEqual(@as(f32, 0), inner1);
+
+    // 第 2 帧：上一帧已登记「最内层 hover = inner」→ 只有内层滚
+    ui.input = .{ .mouse = .{ .x = 100, .y = 100 }, .wheel = -1 };
+    ui.begin(400, 300);
+    build.run(&ui);
+    ui.paint();
+    const page2 = ui.scrollOffset("page");
+    const inner2 = ui.scrollOffset("inner");
+    try std.testing.expectEqual(page1, page2);
+    try std.testing.expect(inner2 > 0);
 }
