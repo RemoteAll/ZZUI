@@ -8,6 +8,7 @@
 
 - **项目定位：Zig 语言（ZigLang）的 UI 界面框架**（用户口径，见 `docs/决策记录.md`）。
 - `g:\Code\Zig\ZZUI` 目前仍是空仓库（仅接续基建），**尚无业务代码与 `build.zig`**。
+- 远端：`https://github.com/RemoteAll/ZZUI.git`（remote 名 `origin`，分支 `main`）。
 - 设计细节（渲染后端 / API 风格 / 控件范围 / 与 `ZZCOM` 的复用关系 / 首个可运行样例）**待确认后落文**，不得凭猜测写进代码或文档。
 
 ## 技术基线（沿用同级 Zig 项目已验证口径）
