@@ -27,6 +27,16 @@ const State = struct {
     toast_open: bool = true,
     toast_since: f64 = -1,
     select_anchor: zzui.types.Rect = .{},
+    pwd: [64]u8 = @splat(0),
+    pwd_len: usize = 0,
+    pwd_caret: usize = 0,
+    q: [64]u8 = @splat(0),
+    q_len: usize = 0,
+    q_caret: usize = 0,
+    amount: f32 = 3,
+    notes: [256]u8 = @splat(0),
+    notes_len: usize = 0,
+    notes_caret: usize = 0,
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -167,6 +177,17 @@ fn build(ui: *zzui.core.Context, st: *State) void {
                 st.ctx_at = p;
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 文本编辑族
+    {
+        var card = zzui.extras.card(ui, .{});
+        defer card.end();
+        zzui.widgets.heading(ui, "Text editing", 3);
+        _ = zzui.widgets.input(ui, "pwd", st.pwd[0..], &st.pwd_len, &st.pwd_caret, .{ .password = true, .placeholder = "Password" });
+        _ = zzui.textedit.search(ui, "q", st.q[0..], &st.q_len, &st.q_caret, .{ .placeholder = "Search components" });
+        _ = zzui.textedit.number(ui, "num", &st.amount, .{ .label = "Quantity", .min = 0, .max = 20, .step = 1, .suffix = "pcs" });
+        _ = zzui.textedit.textarea(ui, "ta", st.notes[0..], &st.notes_len, &st.notes_caret, .{ .rows = 3, .placeholder = "Notes..." });
     }
 }
 

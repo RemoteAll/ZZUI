@@ -5,6 +5,7 @@ const widgets = @import("widgets.zig");
 const extras = @import("extras.zig");
 const controls = @import("controls.zig");
 const overlay = @import("overlay.zig");
+const textedit = @import("textedit.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
@@ -643,4 +644,138 @@ test "popover draws a panel and stays inside the window" {
     const panel = ui.nodes[before].rect;
     try std.testing.expect(panel.x >= 0 and panel.x + panel.w <= 400);
     try std.testing.expect(panel.y >= 0 and panel.y + panel.h <= 300);
+}
+
+// ---------------------------------------------------------------- 文本编辑族（textedit）
+
+test "textarea inserts characters and newlines" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    var len: usize = 0;
+    var caret: usize = 0;
+    const opts = textedit.TextareaOpts{ .rows = 3 };
+
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "ta", buf[0..], &len, &caret, opts);
+    ui.paint();
+    const id = core.Context.idOf("ta") ^ 0x7A47E;
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    const mx = r.x + 12;
+    const my = r.y + 12;
+
+    // 点击取得焦点
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "ta", buf[0..], &len, &caret, opts);
+    ui.paint();
+
+    // 输入 "hi"，再回车换行
+    ui.input = .{};
+    ui.input.addCharBytes("hi");
+    ui.begin(400, 200);
+    var changed = textedit.textarea(&ui, "ta", buf[0..], &len, &caret, opts);
+    ui.paint();
+    try std.testing.expect(changed);
+    try std.testing.expectEqualStrings("hi", buf[0..len]);
+
+    ui.input = .{};
+    ui.input.addKey(.enter);
+    ui.begin(400, 200);
+    changed = textedit.textarea(&ui, "ta", buf[0..], &len, &caret, opts);
+    ui.paint();
+    try std.testing.expect(changed);
+    try std.testing.expectEqualStrings("hi\n", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 3), caret);
+}
+
+test "textarea backspace removes the newline across lines" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "ab\ncd";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 3; // 紧跟在换行之后（第二行行首）
+    const opts = textedit.TextareaOpts{ .rows = 3 };
+
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
+    ui.paint();
+    const id = core.Context.idOf("tb") ^ 0x7A47E;
+    const r = ui.lastRect(id) orelse return error.NoHit;
+
+    ui.input = .{ .mouse = .{ .x = r.x + 12, .y = r.y + 12 }, .click = .{ .x = r.x + 12, .y = r.y + 12 } };
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
+    ui.paint();
+    // 点击会定位到第一行行首；把光标放回第二行行首（模拟用户已移到下一行）
+    caret = 3;
+
+    ui.input = .{};
+    ui.input.addKey(.backspace);
+    ui.begin(400, 200);
+    const changed = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
+    ui.paint();
+
+    try std.testing.expect(changed);
+    try std.testing.expectEqualStrings("abcd", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 2), caret);
+}
+
+test "search clears through the trailing button" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "zig";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = seed.len;
+    const opts = textedit.SearchOpts{ .width = 240 };
+
+    ui.begin(400, 200);
+    _ = textedit.search(&ui, "q", buf[0..], &len, &caret, opts);
+    ui.paint();
+    const id = core.Context.idOf("q") ^ 0x5EA4C4;
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    // 清除按钮在字段右端 20×20
+    const cx = r.x + r.w - 16;
+    const cy = r.y + r.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = cx, .y = cy }, .click = .{ .x = cx, .y = cy } };
+    ui.begin(400, 200);
+    const res = textedit.search(&ui, "q", buf[0..], &len, &caret, opts);
+    ui.paint();
+
+    try std.testing.expect(res.changed);
+    try std.testing.expect(!res.submitted);
+    try std.testing.expectEqual(@as(usize, 0), len);
+    try std.testing.expectEqual(@as(usize, 0), caret);
+}
+
+test "number steps and clamps to its range" {
+    var ui = core.Context{};
+    var value: f32 = 19;
+    const opts = textedit.NumberOpts{ .width = 160, .min = 0, .max = 20, .step = 1 };
+
+    ui.begin(400, 200);
+    _ = textedit.number(&ui, "n", &value, opts);
+    ui.paint();
+    // 右侧 + 按钮
+    const inc_id = core.Context.idOf("n") ^ 0x4E5542;
+    const ir = ui.lastRect(inc_id) orelse return error.NoHit;
+    const ix = ir.x + ir.w / 2;
+    const iy = ir.y + ir.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = ix, .y = iy }, .click = .{ .x = ix, .y = iy } };
+    ui.begin(400, 200);
+    const changed = textedit.number(&ui, "n", &value, opts);
+    ui.paint();
+    try std.testing.expect(changed);
+    try std.testing.expectEqual(@as(f32, 20), value);
+
+    // 已到上限：再点不变
+    ui.input = .{ .mouse = .{ .x = ix, .y = iy }, .click = .{ .x = ix, .y = iy } };
+    ui.begin(400, 200);
+    const changed2 = textedit.number(&ui, "n", &value, opts);
+    ui.paint();
+    try std.testing.expect(!changed2);
+    try std.testing.expectEqual(@as(f32, 20), value);
 }

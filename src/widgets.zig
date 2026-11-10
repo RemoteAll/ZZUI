@@ -235,6 +235,8 @@ pub const InputOpts = struct {
     placeholder: []const u8 = "",
     /// 0 表示撑满内容宽。
     width: f32 = 0,
+    /// 密码框：用圆点代替实际字符（缓冲里仍是明文）。
+    password: bool = false,
 };
 
 fn utf8Len(b: u8) usize {
@@ -265,6 +267,47 @@ fn caretFromX(ui: *core.Context, s: []const u8, x0: f32, mx: f32) usize {
     return s.len;
 }
 
+/// 单行文本编辑按键（`input` / `textedit.search` 共用）：退格、Delete、左右、Home/End、字符插入。
+pub fn editKeys(ui: *core.Context, buf: []u8, len: *usize, caret: *usize, changed: *bool) void {
+    if (ui.input.keyPressed(.backspace) and caret.* > 0 and caret.* <= len.*) {
+        const prev = prevCharStart(buf[0..len.*], caret.*);
+        const n = caret.* - prev;
+        var k = caret.*;
+        while (k < len.*) : (k += 1) buf[k - n] = buf[k];
+        len.* -= n;
+        caret.* = prev;
+        changed.* = true;
+    }
+    if (ui.input.keyPressed(.delete) and caret.* < len.*) {
+        const end = nextCharEnd(buf[0..len.*], caret.*);
+        const n = end - caret.*;
+        var k = end;
+        while (k < len.*) : (k += 1) buf[k - n] = buf[k];
+        len.* -= n;
+        changed.* = true;
+    }
+    if (ui.input.keyPressed(.left) and caret.* > 0) caret.* = prevCharStart(buf[0..len.*], caret.*);
+    if (ui.input.keyPressed(.right) and caret.* < len.*) caret.* = nextCharEnd(buf[0..len.*], caret.*);
+    if (ui.input.keyPressed(.home)) caret.* = 0;
+    if (ui.input.keyPressed(.end)) caret.* = len.*;
+
+    const chars = ui.input.charsSlice();
+    var ci: usize = 0;
+    while (ci < chars.len) {
+        const clen = utf8Len(chars[ci]);
+        if (ci + clen > chars.len) break;
+        if (len.* + clen <= buf.len and caret.* <= len.*) {
+            var k = len.*;
+            while (k > caret.*) : (k -= 1) buf[k + clen - 1] = buf[k - 1];
+            @memcpy(buf[caret.* .. caret.* + clen], chars[ci .. ci + clen]);
+            len.* += clen;
+            caret.* += clen;
+            changed.* = true;
+        }
+        ci += clen;
+    }
+}
+
 /// 单行文本输入：点击定位光标，方向键 / Home / End / 退格 / Delete 编辑。
 /// 返回 true 表示内容发生了变化。`buf` 由调用方提供（定长），`len` / `caret` 按字节计。
 pub fn input(
@@ -287,43 +330,7 @@ pub fn input(
 
     if (it.focused) {
         // 先处理导航/编辑键，再插入本帧字符：与真实的 KEYDOWN-先于-WM_CHAR 顺序一致。
-        if (ui.input.keyPressed(.backspace) and caret.* > 0 and caret.* <= len.*) {
-            const prev = prevCharStart(buf[0..len.*], caret.*);
-            const n = caret.* - prev;
-            var k = caret.*;
-            while (k < len.*) : (k += 1) buf[k - n] = buf[k];
-            len.* -= n;
-            caret.* = prev;
-            changed = true;
-        }
-        if (ui.input.keyPressed(.delete) and caret.* < len.*) {
-            const end = nextCharEnd(buf[0..len.*], caret.*);
-            const n = end - caret.*;
-            var k = end;
-            while (k < len.*) : (k += 1) buf[k - n] = buf[k];
-            len.* -= n;
-            changed = true;
-        }
-        if (ui.input.keyPressed(.left) and caret.* > 0) caret.* = prevCharStart(buf[0..len.*], caret.*);
-        if (ui.input.keyPressed(.right) and caret.* < len.*) caret.* = nextCharEnd(buf[0..len.*], caret.*);
-        if (ui.input.keyPressed(.home)) caret.* = 0;
-        if (ui.input.keyPressed(.end)) caret.* = len.*;
-
-        const chars = ui.input.charsSlice();
-        var ci: usize = 0;
-        while (ci < chars.len) {
-            const clen = utf8Len(chars[ci]);
-            if (ci + clen > chars.len) break;
-            if (len.* + clen <= buf.len and caret.* <= len.*) {
-                var k = len.*;
-                while (k > caret.*) : (k -= 1) buf[k + clen - 1] = buf[k - 1];
-                @memcpy(buf[caret.* .. caret.* + clen], chars[ci .. ci + clen]);
-                len.* += clen;
-                caret.* += clen;
-                changed = true;
-            }
-            ci += clen;
-        }
+        editKeys(ui, buf, len, caret, &changed);
     }
 
     const border = if (it.focused) theme.accent else theme.border;
@@ -336,6 +343,17 @@ pub fn input(
     if (len.* == 0 and opts.placeholder.len > 0) {
         const pm = ui.measureText(opts.placeholder, theme.font_body);
         ui.addText(.{ .x = tx, .y = rect.y + (rect.h - pm.h) / 2, .w = pm.w, .h = pm.h }, opts.placeholder, theme.font_body, theme.secondary);
+    } else if (opts.password) {
+        // 每个字符画一个圆点（宽度按真实文本算，光标位置不受影响）
+        var dots: [192]u8 = @splat(0);
+        var dn: usize = 0;
+        var k: usize = 0;
+        while (k < content.len and dn + 3 <= dots.len) : (k = nextCharEnd(content, k)) {
+            @memcpy(dots[dn .. dn + 3], "•");
+            dn += 3;
+        }
+        const dm = ui.measureText(dots[0..dn], theme.font_body);
+        ui.addText(.{ .x = tx, .y = ty, .w = dm.w, .h = dm.h }, ui.frameStr(dots[0..dn]), theme.font_body, theme.text);
     } else {
         // 超宽时只显示尾部（保证光标可见的常见场景），从字符边界截断
         const inner_w = rect.w - pad_x * 2;
