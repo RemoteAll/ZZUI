@@ -4,6 +4,7 @@ const std = @import("std");
 const core = @import("core.zig");
 const theme = @import("theme.zig");
 const widgets = @import("widgets.zig");
+const num = @import("num.zig");
 const t = @import("types.zig");
 
 const MAX_LINES = 64;
@@ -459,10 +460,5 @@ pub fn number(ui: *core.Context, id: []const u8, value: *f32, opts: NumberOpts) 
 }
 
 fn fmtNumber(buf: []u8, v: f32, decimals: u8) []const u8 {
-    return switch (decimals) {
-        0 => std.fmt.bufPrint(buf, "{d}", .{@as(i64, @intFromFloat(@round(v)))}) catch "",
-        1 => std.fmt.bufPrint(buf, "{d:.1}", .{v}) catch "",
-        2 => std.fmt.bufPrint(buf, "{d:.2}", .{v}) catch "",
-        else => std.fmt.bufPrint(buf, "{d:.3}", .{v}) catch "",
-    };
+    return num.fixed(buf, v, decimals);
 }

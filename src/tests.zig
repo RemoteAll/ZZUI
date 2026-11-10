@@ -7,6 +7,7 @@ const controls = @import("controls.zig");
 const overlay = @import("overlay.zig");
 const textedit = @import("textedit.zig");
 const table = @import("table.zig");
+const charts = @import("charts.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
@@ -931,4 +932,69 @@ test "wheel scrolls only the innermost scroll view" {
     const inner2 = ui.scrollOffset("inner");
     try std.testing.expectEqual(page1, page2);
     try std.testing.expect(inner2 > 0);
+}
+
+// ---------------------------------------------------------------- 图表族（charts）
+
+test "line chart draws segments without overflowing capacities" {
+    var ui = core.Context{};
+    const a = [_]f32{ 1, 3, 2, 5, 4, 6, 5, 8, 7, 9 };
+    const s = [_]charts.Series{.{ .values = &a, .color = theme.accent }};
+
+    ui.begin(600, 400);
+    charts.lineChart(&ui, &s, .{ .height = 140, .fill = true });
+    ui.paint();
+
+    try std.testing.expect(!ui.overflowed);
+    // 9 段折线 + 面积填充的粗线段
+    try std.testing.expect(ui.overlay_count >= 9);
+}
+
+test "sparkline area fill stays within the line budget on big data" {
+    var ui = core.Context{};
+    var big: [400]f32 = undefined;
+    for (&big, 0..) |*v, i| v.* = @floatFromInt(i % 17);
+
+    ui.begin(600, 100);
+    charts.sparkline(&ui, &big, .{ .height = 30, .fill = true });
+    ui.paint();
+
+    try std.testing.expect(!ui.overflowed);
+    try std.testing.expect(ui.overlay_count <= core.MAX_OVERLAYS);
+}
+
+test "donut and gauge clamp their inputs and draw legends" {
+    var ui = core.Context{};
+    const values = [_]f32{ 42, 26, 18, 14 };
+    const labels = [_][]const u8{ "API", "Auth", "Worker", "Other" };
+    const colors = [_]t.Color{ theme.accent, theme.success, theme.warn, theme.danger };
+
+    ui.begin(600, 300);
+    const before = ui.node_count;
+    charts.donutChart(&ui, &values, &labels, &colors, .{ .center_label = "100" });
+    // 图例 4 个色块 + 4 段文字 + 中心文字
+    try std.testing.expect(ui.node_count >= before + 9);
+
+    charts.gauge(&ui, 1.6, .{ .label = "CPU" });
+    charts.gauge(&ui, -0.2, .{});
+    ui.paint();
+    try std.testing.expect(!ui.overflowed);
+}
+
+test "bar chart handles multiple series side by side" {
+    var ui = core.Context{};
+    const a = [_]f32{ 5, 8, 6, 10 };
+    const b = [_]f32{ 2, 4, 3, 6 };
+    const s = [_]charts.Series{
+        .{ .values = &a, .color = theme.accent },
+        .{ .values = &b, .color = theme.success },
+    };
+
+    ui.begin(600, 300);
+    const before = ui.node_count;
+    charts.barChart(&ui, &s, .{ .height = 120 });
+    ui.paint();
+    // 8 根柱 + 面板底/边 + 标签
+    try std.testing.expect(ui.node_count >= before + 8);
+    try std.testing.expect(!ui.overflowed);
 }

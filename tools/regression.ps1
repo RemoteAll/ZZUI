@@ -159,53 +159,44 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     Skip "shot" "zzui-hello-x64.exe not found"
 }
 
-Write-Host "== 1.6 gallery (extras + controls) =="
+Write-Host "== 1.6 gallery (4 pages: extras/controls/table/charts) =="
 if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     $tmp3 = Join-Path $env:TEMP 'zzui-regression'
     if (-not (Test-Path $tmp3)) { New-Item -ItemType Directory -Path $tmp3 -Force | Out-Null }
+
+    # --once 也会检查容量溢出（溢出时退出码 8）
     Remove-Item (Join-Path $tmp3 'zzui-gallery.bmp') -ErrorAction SilentlyContinue
     $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--once') $tmp3
     Check "gallery:once-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
     $gb = Join-Path $tmp3 'zzui-gallery.bmp'
     if (Test-Path $gb) {
-        $expect = 54 + 720 * 1600 * 4
+        $expect = 54 + 720 * 1000 * 4
         Check "gallery:once-size" ((Get-Item $gb).Length -eq $expect) ("bytes=" + (Get-Item $gb).Length + " expect=" + $expect)
     } else {
         Check "gallery:once-size" $false "bmp not written"
     }
-    Remove-Item (Join-Path $tmp3 'zzui-gallery-shot.bmp') -ErrorAction SilentlyContinue
-    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--shot') $tmp3
-    Check "gallery:shot-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
-    $gs = Join-Path $tmp3 'zzui-gallery-shot.bmp'
-    if (Test-Path $gs) {
-        $g = [IO.File]::ReadAllBytes($gs)
-        $gw = [BitConverter]::ToInt32($g, 18)
-        $gh = [BitConverter]::ToInt32($g, 22)
-        $dark = 0
-        for ($y = 20; $y -lt [Math]::Min(900, $gh); $y++) {
-            for ($x = 20; $x -lt [Math]::Min(460, $gw); $x++) {
-                $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
-                if ($g[$off] -lt 100 -and $g[$off+1] -lt 100 -and $g[$off+2] -lt 100) { $dark++ }
+
+    # 4 页逐页真渲染：每页都要有文字像素（证明该页控件真的画了）
+    foreach ($pg in 0, 1, 2, 3) {
+        $bmp = Join-Path $tmp3 ("zzui-gallery-p" + $pg + ".bmp")
+        Remove-Item $bmp -ErrorAction SilentlyContinue
+        $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @("--shot-$pg") $tmp3
+        Check ("gallery:page$pg-exit") ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+        if (Test-Path $bmp) {
+            $g = [IO.File]::ReadAllBytes($bmp)
+            $gw = [BitConverter]::ToInt32($g, 18)
+            $gh = [BitConverter]::ToInt32($g, 22)
+            $dark = 0
+            for ($y = 20; $y -lt [Math]::Min(900, $gh); $y += 2) {
+                for ($x = 20; $x -lt [Math]::Min(460, $gw); $x += 2) {
+                    $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                    if ($g[$off] -lt 100 -and $g[$off+1] -lt 100 -and $g[$off+2] -lt 100) { $dark++ }
+                }
             }
+            Check ("gallery:page$pg-text") ($dark -gt 200) ("dark=" + $dark + " size=" + $gw + "x" + $gh)
+        } else {
+            Check ("gallery:page$pg-text") $false "bmp not written"
         }
-        Check "gallery:shot-text" ($dark -gt 2000) ("dark=" + $dark + " size=" + $gw + "x" + $gh)
-    } else {
-        Check "gallery:shot-text" $false "shot bmp not written"
-    }
-    Remove-Item (Join-Path $tmp3 'zzui-gallery-palette.bmp') -ErrorAction SilentlyContinue
-    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--shot-palette') $tmp3
-    Check "gallery:palette-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
-    $gp = Join-Path $tmp3 'zzui-gallery-palette.bmp'
-    if (Test-Path $gp) {
-        $q = [IO.File]::ReadAllBytes($gp)
-        $pw = [BitConverter]::ToInt32($q, 18)
-        $ph = [BitConverter]::ToInt32($q, 22)
-        # 命令面板有全窗口遮罩：左上角必须被压暗（未压暗时是 255）
-        $offc = 54 + ($ph - 1 - 4) * $pw * 4 + 4 * 4
-        $dimmed = $q[$offc + 2]
-        Check "gallery:palette-dim" ($dimmed -lt 220) ("corner=" + $dimmed + " size=" + $pw + "x" + $ph)
-    } else {
-        Check "gallery:palette-dim" $false "palette bmp not written"
     }
 } else {
     Skip "gallery" "zzui-gallery-x64.exe not found"

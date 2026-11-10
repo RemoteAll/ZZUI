@@ -266,6 +266,8 @@ pub const Context = struct {
     wheel_target_next: u64 = 0,
     /// 本帧滚轮是否已被某个滚动区消费。
     wheel_used: bool = false,
+    /// 本帧是否发生过容量溢出（节点/指令/线段/命中）——静默截断会让界面「莫名少画」，必须能查。
+    overflowed: bool = false,
     /// 悬停开始时间（tooltip 用），跨帧保留。
     tips: [MAX_TIPS]TipState = @splat(.{}),
     tip_n: usize = 0,
@@ -292,6 +294,7 @@ pub const Context = struct {
         self.overlay_layer = 0;
         self.overlay_backdrop_clicked = false;
         self.max_layer = 0;
+        self.overflowed = false;
         self.clip = null;
         self.wheel_target = self.wheel_target_next;
         self.wheel_target_next = 0;
@@ -539,7 +542,7 @@ pub const Context = struct {
         if (self.hits_curr_n < MAX_HITS) {
             self.hits_curr[self.hits_curr_n] = .{ .id = id, .rect = rect, .layer = self.overlay_layer };
             self.hits_curr_n += 1;
-        }
+        } else self.overflowed = true;
         var out = Interaction{};
         out.hover = rect.contains(self.input.mouse.x, self.input.mouse.y);
         out.focused = focusable and self.focus_id == id;
@@ -688,7 +691,10 @@ pub const Context = struct {
 
     /// 覆盖层线段：在节点之后绘制（勾、焦点环等）。
     pub fn addOverlayLine(self: *Context, from: t.Point, to: t.Point, width: f32, color: t.Color) void {
-        if (self.overlay_count >= MAX_OVERLAYS) return;
+        if (self.overlay_count >= MAX_OVERLAYS) {
+            self.overflowed = true;
+            return;
+        }
         self.overlays[self.overlay_count] = .{ .line = .{ .from = from, .to = to, .width = width, .color = color, .clip = self.clip, .layer = self.overlay_layer } };
         self.overlay_count += 1;
     }
@@ -701,13 +707,19 @@ pub const Context = struct {
     }
 
     fn push(self: *Context, cmd: Command) void {
-        if (self.cmd_count >= MAX_COMMANDS) return;
+        if (self.cmd_count >= MAX_COMMANDS) {
+            self.overflowed = true;
+            return;
+        }
         self.cmds[self.cmd_count] = cmd;
         self.cmd_count += 1;
     }
 
     fn addNode(self: *Context, n: Node) usize {
-        if (self.node_count >= MAX_NODES) return MAX_NODES - 1;
+        if (self.node_count >= MAX_NODES) {
+            self.overflowed = true;
+            return MAX_NODES - 1;
+        }
         var node = n;
         node.clip = self.clip;
         node.layer = self.overlay_layer;

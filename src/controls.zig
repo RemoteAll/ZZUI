@@ -4,6 +4,7 @@ const std = @import("std");
 const core = @import("core.zig");
 const theme = @import("theme.zig");
 const widgets = @import("widgets.zig");
+const num = @import("num.zig");
 const t = @import("types.zig");
 
 fn pairId(id: []const u8, salt: u64) u64 {
@@ -133,7 +134,7 @@ pub fn stepper(ui: *core.Context, id: []const u8, value: *i32, min: i32, max: i3
     if (widgets.buttonRect(ui, dec, "-", .{ .width = bw, .id_salt = pairId(id, 0xE11) }) and value.* > min) value.* -= 1;
     const vr = ui.reserve(52, h, false);
     var buf: [16]u8 = @splat(0);
-    const s = std.fmt.bufPrint(&buf, "{d}", .{value.*}) catch "0";
+    const s = num.int(&buf, @intCast(value.*));
     const m = ui.measureText(s, theme.font_body);
     ui.addText(.{ .x = vr.x + (vr.w - m.w) / 2, .y = vr.y + (h - m.h) / 2, .w = m.w, .h = m.h }, ui.frameStr(s), theme.font_body, theme.text);
     const inc = ui.reserve(bw, h, false);
