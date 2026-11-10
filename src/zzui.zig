@@ -43,6 +43,7 @@ pub const App = struct {
     pub fn next(self: *App) bool {
         if (!self.backend.poll()) return false;
         const sz = self.backend.size();
+        self.ui.time = self.backend.now();
         self.ui.measure_ctx = @ptrCast(&self.backend);
         self.ui.measure_fn = measureThunk;
         self.ui.input = self.backend.input().*;

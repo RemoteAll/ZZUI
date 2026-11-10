@@ -68,11 +68,17 @@ pub const MAX_FOCUS = 64;
 pub const MAX_OVERLAYS = 64;
 pub const MAX_TEXT_POOL = 8192;
 pub const MAX_SCROLLS = 16;
+pub const MAX_TIPS = 16;
 
 const ScrollState = struct {
     id: u64 = 0,
     offset: f32 = 0,
     content_h: f32 = 0,
+};
+
+const TipState = struct {
+    id: u64 = 0,
+    start: f64 = 0,
 };
 
 const Frame = struct {
@@ -145,8 +151,11 @@ pub const PanelOpts = struct {
 };
 
 pub const OverlayOpts = struct {
-    dim: t.Color = .{ .r = 0, .g = 0, .b = 0, .a = 90 },
+    /// null = 不加遮罩；alpha=0 也不会画。
+    dim: ?t.Color = .{ .r = 0, .g = 0, .b = 0, .a = 90 },
     id: u64 = 0,
+    /// false = 遮罩不接收点击（tooltip 这类纯展示浮层）。
+    hit: bool = true,
 };
 
 pub const ScrollOpts = struct {
@@ -244,6 +253,11 @@ pub const Context = struct {
     /// 滚动状态跨帧保留（不进 begin 重置）。
     scrolls: [MAX_SCROLLS]ScrollState = @splat(.{}),
     scroll_n: usize = 0,
+    /// 悬停开始时间（tooltip 用），跨帧保留。
+    tips: [MAX_TIPS]TipState = @splat(.{}),
+    tip_n: usize = 0,
+    /// 本帧时间（秒），由 App 每帧写入。
+    time: f64 = 0,
     /// 帧内字符串池：控件里拼出来的文本（如数字）要拷进来，否则节点会持有失效的栈切片。
     text_pool: [MAX_TEXT_POOL]u8 = undefined,
     text_pool_len: usize = 0,
@@ -520,14 +534,52 @@ pub const Context = struct {
         self.overlay_layer +|= 1;
         if (self.overlay_layer > self.max_layer) self.max_layer = self.overlay_layer;
         const full = t.Rect{ .x = 0, .y = 0, .w = self.width, .h = self.height };
-        const hit = self.interactEx(opts.id ^ 0xBACC0FFEE, full, false);
-        self.overlay_backdrop_clicked = hit.clicked;
-        self.addBox(full, .{ .fill = opts.dim });
+        if (opts.hit) {
+            const hit = self.interactEx(opts.id ^ 0xBACC0FFEE, full, false);
+            self.overlay_backdrop_clicked = hit.clicked;
+        } else {
+            self.overlay_backdrop_clicked = false;
+        }
+        if (opts.dim) |d| {
+            if (d.a > 0) self.addBox(full, .{ .fill = d });
+        }
         return .{ .ui = self };
     }
 
     pub fn overlayBackdropClicked(self: *Context) bool {
         return self.overlay_backdrop_clicked;
+    }
+
+    /// 本帧已登记的命中矩形（控件建完即可查询，供菜单/浮层定位）。
+    pub fn lastRect(self: *Context, id: u64) ?t.Rect {
+        var i: usize = 0;
+        while (i < self.hits_curr_n) : (i += 1) {
+            if (self.hits_curr[i].id == id) return self.hits_curr[i].rect;
+        }
+        return null;
+    }
+
+    /// 悬停计时（tooltip 用）：返回该 id 的首次悬停时间，首次调用时记录当前时间。
+    pub fn hoverStart(self: *Context, id: u64) f64 {
+        var i: usize = 0;
+        while (i < self.tip_n) : (i += 1) {
+            if (self.tips[i].id == id) return self.tips[i].start;
+        }
+        if (self.tip_n >= self.tips.len) return self.time;
+        self.tips[self.tip_n] = .{ .id = id, .start = self.time };
+        self.tip_n += 1;
+        return self.time;
+    }
+
+    pub fn hoverReset(self: *Context, id: u64) void {
+        var i: usize = 0;
+        while (i < self.tip_n) : (i += 1) {
+            if (self.tips[i].id == id) {
+                self.tips[i] = self.tips[self.tip_n - 1];
+                self.tip_n -= 1;
+                return;
+            }
+        }
     }
 
     /// 绝对定位面板：节点矩形就是 rect，内部内容从 rect + pad 开始；不推进父容器游标。

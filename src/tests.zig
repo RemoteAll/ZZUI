@@ -3,6 +3,7 @@ const std = @import("std");
 const core = @import("core.zig");
 const widgets = @import("widgets.zig");
 const theme = @import("theme.zig");
+const t = @import("types.zig");
 
 test "checkbox toggles on click (last-frame hit test)" {
     var ui = core.Context{};
@@ -280,4 +281,47 @@ test "scroll clamps offset to content height" {
     }
     // 内容高 = 20*20 + 19*4 = 476；max offset = 476 - 100 = 376
     try std.testing.expectApproxEqAbs(@as(f32, 376), off, 0.01);
+}
+test "menu selects an item and closes" {
+    var ui = core.Context{};
+    var open = true;
+    const anchor = t.Rect{ .x = 10, .y = 10, .w = 100, .h = 30 };
+    const items = [_]widgets.MenuItem{ .{ .label = "A" }, .{ .label = "B" } };
+
+    ui.begin(400, 300);
+    _ = widgets.menu(&ui, "m", anchor, &items, &open, .{});
+    ui.paint();
+
+    // 首项中心 ≈ (16..184, 52..82)
+    ui.input = .{ .mouse = .{ .x = 60, .y = 67 }, .click = .{ .x = 60, .y = 67 } };
+    ui.begin(400, 300);
+    const sel = widgets.menu(&ui, "m", anchor, &items, &open, .{});
+    ui.paint();
+
+    try std.testing.expectEqual(@as(?usize, 0), sel);
+    try std.testing.expect(!open);
+}
+
+test "tooltip appears after the hover delay and adds no hit" {
+    var ui = core.Context{};
+    const anchor = t.Rect{ .x = 20, .y = 20, .w = 60, .h = 20 };
+
+    ui.input = .{ .mouse = .{ .x = 30, .y = 30 } };
+    ui.begin(300, 200);
+    widgets.tooltip(&ui, "tip", anchor, "Hello", true, 0.35);
+    ui.paint();
+    try std.testing.expectEqual(@as(u8, 0), ui.max_layer);
+
+    ui.time = 0.4;
+    ui.input = .{ .mouse = .{ .x = 30, .y = 30 } };
+    ui.begin(300, 200);
+    widgets.tooltip(&ui, "tip", anchor, "Hello", true, 0.35);
+    ui.paint();
+    try std.testing.expectEqual(@as(u8, 1), ui.max_layer);
+
+    ui.input = .{};
+    ui.begin(300, 200);
+    widgets.tooltip(&ui, "tip", anchor, "Hello", false, 0.35);
+    ui.paint();
+    try std.testing.expectEqual(@as(u8, 0), ui.max_layer);
 }

@@ -4,11 +4,11 @@
 > **开工先读（存在则读，按序）**：`.github/copilot-instructions.md` → `docs/项目接续指南.md` → `docs/用户档案.md` → `docs/项目记忆.md` → `docs/决策记录.md` 最新节。
 > **机器自愈（有则快跑）**：`tools/continuity/install-global-instruction.ps1`（幂等；打开项目时 `.vscode/tasks.json` 也会自动跑）。
 
-## 项目现状（2026-11-10 里程碑 1 已落地）
+## 项目现状（2026-11-10 里程碑 1-6 已落地）
 
-- **定位**：ZigLang 的 UI 界面框架；**CUI（`G:\Code\C\CUI`）为移植蓝本，必须多平台**（用户口径）。
-- 已实现：平台层抽象（`src/platform.zig` + `platform/win32.zig` + `platform/null.zig`）、立即模式核心（节点 / 栈布局 / 绘制指令 / 上一帧命中判定 / Tab 焦点 / 鼠标捕获 / 帧内文本池 / 文本换行 / 浮层层与点击优先级 / **裁剪与滚动视口**）、软件光栅（BGRA、圆角、线段、裁剪）、**11 个控件**（heading / text / secondary / separator / button / switch / checkbox / radio / slider / input / dialog）、`examples/hello.zig` 与 `--once` / `--shot` 两种无人工出图。
-- 产物（实测）：`zzui-hello-x64.exe` **160,256 B（156.5 KB）**、x86 **162,816 B（159.0 KB）**；体积门槛 303,104 B（CUI hello 基线）写在 `tools/regression.ps1`，只能收紧。
+- **定位**：ZigLang 的 UI 界面框构；**CUI（`G:\Code\C\CUI`）为移植蓝本，必须多平台**（用户口径）。
+- 已实现：平台层抽象（`src/platform.zig` + `platform/win32.zig` + `platform/null.zig`）、立即模式核心（节点 / 栈布局 / 绘制指令 / 上一帧命中判定 / Tab 焦点 / 鼠标捕获 / 帧内文本池 / 文本换行 / 浮层层与点击优先级 / **裁剪与滚动视口** / **帧时间与悬停计时**）、软件光栅（BGRA、圆角、线段、裁剪）、**13 个控件**（heading / text / secondary / separator / button / switch / checkbox / radio / slider / input / dialog / menu / tooltip）、`examples/hello.zig` 与 `--once` / `--shot` 两种无人工出图。
+- 产物（实测）：`zzui-hello-x64.exe` **163,328 B（159.5 KB）**、x86 **165,888 B（162.0 KB）**；体积门槛 303,104 B（CUI hello 基线）写在 `tools/regression.ps1`，只能收紧；单测 16 项。
 - 远端：`https://github.com/RemoteAll/ZZUI.git`（remote 名 `origin`，分支 `main`）。
 - 待办：Cocoa / X11 后端、帧末统一布局、状态回收与动画、深色主题；文本当前由平台层用系统字体画（核心不带 TTF 光栅器）。
 

@@ -60,6 +60,13 @@ pub const Backend = union(enum) {
         };
     }
 
+    pub fn now(self: *Backend) f64 {
+        return switch (self.*) {
+            .win32 => |*b| b.now(),
+            .null_backend => |*b| b.now(),
+        };
+    }
+
     pub fn pixels(self: *Backend) []u8 {
         return switch (self.*) {
             .win32 => |*b| b.pixels(),

@@ -13,6 +13,8 @@ const State = struct {
     name_len: usize = 0,
     name_caret: usize = 0,
     dialog_open: bool = false,
+    menu_open: bool = false,
+    menu_anchor: zzui.types.Rect = .{},
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -26,7 +28,9 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     var row = ui.row(.{ .gap = 8 });
     defer row.end();
     if (zzui.widgets.button(ui, "Click me", .{ .variant = .primary })) st.clicks += 1;
-    if (zzui.widgets.button(ui, "Open dialog", .{})) st.dialog_open = true;
+    const mb = zzui.widgets.buttonEx(ui, "Menu", .{});
+    if (mb.clicked) st.menu_open = true;
+    st.menu_anchor = mb.rect;
     zzui.widgets.textInt(ui, "Clicked ", st.clicks, " times");
 }
 
@@ -94,7 +98,24 @@ fn runShot() i32 {
     defer app.deinit();
     if (!app.next()) return 6;
     var st = State{};
-    st.dialog_open = true;
+    st.menu_open = true;
+    buildOnce(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
+    app.end();
+
+    // 第二帧：鼠标移到“Menu”按钮上，开始计悬停时间
+    if (!app.next()) return 6;
+    st.menu_open = false;
+    app.ui.time = 10;
+    app.ui.input = .{ .mouse = .{ .x = st.menu_anchor.x + 8, .y = st.menu_anchor.y + 8 } };
+    buildOnce(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
+    app.end();
+
+    // 第三帧：超过延迟，提示出现
+    if (!app.next()) return 6;
+    app.ui.time = 10.5;
+    app.ui.input = .{ .mouse = .{ .x = st.menu_anchor.x + 8, .y = st.menu_anchor.y + 8 } };
     buildOnce(&app.ui, &st);
     buildOverlays(&app.ui, &st);
     app.end();
@@ -108,12 +129,28 @@ fn buildOnce(ui: *zzui.core.Context, st: *State) void {
 }
 
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
-    if (!st.dialog_open) return;
-    _ = zzui.widgets.dialog(ui, &st.dialog_open, .{
-        .title = "Delete project",
-        .message = "This action cannot be undone.",
-        .ok_label = "Delete",
-    });
+    if (st.menu_open) {
+        const items = [_]zzui.widgets.MenuItem{
+            .{ .label = "Rename" },
+            .{ .label = "Duplicate" },
+            .{ .label = "Delete project..." },
+            .{ .label = "Disabled item", .enabled = false },
+        };
+        if (zzui.widgets.menu(ui, "main-menu", st.menu_anchor, &items, &st.menu_open, .{})) |idx| {
+            if (idx == 2) st.dialog_open = true;
+        }
+    } else {
+        const ax = st.menu_anchor;
+        const hov = ax.contains(ui.input.mouse.x, ui.input.mouse.y);
+        zzui.widgets.tooltip(ui, "menu-tip", ax, "Open the actions menu", hov, 0.35);
+    }
+    if (st.dialog_open) {
+        _ = zzui.widgets.dialog(ui, &st.dialog_open, .{
+            .title = "Delete project",
+            .message = "This action cannot be undone.",
+            .ok_label = "Delete",
+        });
+    }
 }
 
 fn hasFlag(cmd: [*:0]u16, flag: []const u8) bool {

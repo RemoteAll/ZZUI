@@ -35,6 +35,10 @@ pub const Backend = struct {
         return 1;
     }
 
+    pub fn now(_: *Backend) f64 {
+        return 0;
+    }
+
     pub fn pixels(self: *Backend) []u8 {
         return self.buf;
     }

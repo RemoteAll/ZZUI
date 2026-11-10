@@ -142,6 +142,10 @@ pub const Backend = struct {
         return self.dpi;
     }
 
+    pub fn now(_: *Backend) f64 {
+        return @as(f64, @floatFromInt(w.GetTickCount64())) / 1000.0;
+    }
+
     pub fn pixels(self: *Backend) []u8 {
         const n = @as(usize, self.px_w) * @as(usize, self.px_h) * 4;
         return self.bits[0..n];

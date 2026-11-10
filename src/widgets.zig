@@ -46,11 +46,21 @@ pub const ButtonOpts = struct {
 };
 
 pub fn button(ui: *core.Context, label: []const u8, opts: ButtonOpts) bool {
+    return buttonEx(ui, label, opts).clicked;
+}
+
+pub const ButtonResult = struct {
+    clicked: bool = false,
+    rect: t.Rect = .{},
+};
+
+/// 与 `button` 相同，但把按钮矩形一并返回（菜单需要锚点）。
+pub fn buttonEx(ui: *core.Context, label: []const u8, opts: ButtonOpts) ButtonResult {
     const m = ui.measureText(label, theme.font_body);
     const h: f32 = 36;
     const w = if (opts.width > 0) opts.width else m.w + 28;
     const rect = ui.reserve(w, h, false);
-    return buttonRect(ui, rect, label, opts);
+    return .{ .clicked = buttonRect(ui, rect, label, opts), .rect = rect };
 }
 
 /// 在指定矩形里画按钮（浮层等绝对定位场景）。
@@ -401,4 +411,86 @@ pub fn dialog(ui: *core.Context, open: *bool, opts: DialogOpts) DialogResult {
         result = .cancel;
     }
     return result;
+}
+pub const MenuItem = struct {
+    label: []const u8,
+    enabled: bool = true,
+};
+
+pub const MenuOpts = struct {
+    width: f32 = 180,
+    item_h: f32 = 30,
+    pad: f32 = 6,
+    gap: f32 = 6,
+};
+
+/// 弹出菜单：锚在 anchor 下方（放不下则上方），点空白/Esc 关闭；返回被选中项下标。
+pub fn menu(ui: *core.Context, id: []const u8, anchor: t.Rect, items: []const MenuItem, open: *bool, opts: MenuOpts) ?usize {
+    var ov = ui.beginOverlay(.{ .dim = null, .hit = true });
+    defer ov.end();
+
+    const count: f32 = @floatFromInt(items.len);
+    const w = opts.width;
+    const h = opts.pad * 2 + opts.item_h * count;
+    var x = anchor.x;
+    var y = anchor.y + anchor.h + opts.gap;
+    if (x + w > ui.width) x = ui.width - w - 4;
+    if (x < 0) x = 0;
+    if (y + h > ui.height) y = anchor.y - h - opts.gap;
+    if (y < 0) y = 0;
+
+    var card = ui.panel(.{ .x = x, .y = y, .w = w, .h = h }, .{
+        .fill = theme.surface,
+        .radius = 10,
+        .border = theme.border,
+        .pad = opts.pad,
+    });
+    defer card.end();
+
+    var selected: ?usize = null;
+    var i: usize = 0;
+    while (i < items.len) : (i += 1) {
+        const r = ui.reserve(0, opts.item_h, true);
+        const iid = core.Context.idOf(id) ^ (@as(u64, 0xA11CE) + i);
+        const it = ui.interactEx(iid, r, items[i].enabled);
+        if (it.hover and items[i].enabled) {
+            ui.addBox(r, .{ .fill = theme.track, .radius = 6 });
+        }
+        const m = ui.measureText(items[i].label, theme.font_body);
+        const color: t.Color = if (items[i].enabled) theme.text else theme.secondary;
+        ui.addText(.{ .x = r.x + 8, .y = r.y + (r.h - m.h) / 2, .w = m.w, .h = m.h }, items[i].label, theme.font_body, color);
+        if (it.clicked and items[i].enabled) selected = i;
+    }
+
+    if (selected != null or ui.overlayBackdropClicked() or ui.input.keyPressed(.escape)) {
+        open.* = false;
+    }
+    return selected;
+}
+
+/// 悬停提示：`hovered` 为真时开始计时，超过 `delay` 秒才显示；不拦截点击。
+pub fn tooltip(ui: *core.Context, id: []const u8, anchor: t.Rect, label: []const u8, hovered: bool, delay: f64) void {
+    const hash = core.Context.idOf(id) ^ 0x707;
+    if (!hovered) {
+        ui.hoverReset(hash);
+        return;
+    }
+    const start = ui.hoverStart(hash);
+    if (ui.time - start < delay) return;
+
+    const m = ui.measureText(label, theme.font_small);
+    const w = m.w + 16;
+    const h = m.h + 10;
+    var x = anchor.x + anchor.w / 2 - w / 2;
+    var y = anchor.y + anchor.h + 6;
+    if (x + w > ui.width) x = ui.width - w - 4;
+    if (x < 0) x = 0;
+    if (y + h > ui.height) y = anchor.y - h - 6;
+    if (y < 0) y = 0;
+
+    var ov = ui.beginOverlay(.{ .dim = null, .hit = false });
+    defer ov.end();
+
+    ui.addBox(.{ .x = x, .y = y, .w = w, .h = h }, .{ .fill = theme.text, .radius = 6 });
+    ui.addText(.{ .x = x + 8, .y = y + 5, .w = m.w, .h = m.h }, label, theme.font_small, theme.accent_text);
 }
