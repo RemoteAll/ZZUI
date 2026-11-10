@@ -30,20 +30,56 @@ pub fn chip(ui: *core.Context, label: []const u8, selected: *bool) bool {
     return toggled;
 }
 
+pub const TabsOpts = struct {
+    gap: f32 = 4,
+    /// 超出可用宽度时换行（11 个页签这类场景必须开，否则会被裁掉）。
+    wrap: bool = true,
+};
+
 /// 标签页：底部 2px 强调线标识当前页。
 pub fn tabs(ui: *core.Context, id: []const u8, labels: []const []const u8, active: *usize) void {
-    var row = ui.row(.{ .gap = 4 });
-    defer row.end();
+    tabsEx(ui, id, labels, active, .{});
+}
+
+/// 与 `tabs` 相同，可配置换行。换行时按「行」整体占位，不会把后续内容挤出去。
+pub fn tabsEx(ui: *core.Context, id: []const u8, labels: []const []const u8, active: *usize, opts: TabsOpts) void {
+    const h: f32 = 34;
+    const avail = ui.width - 48;
+    var total: f32 = 0;
+    for (labels) |label| total += ui.measureText(label, theme.font_body).w + 24 + opts.gap;
+    const wrap = opts.wrap and total > avail and labels.len > 1;
+
+    var rows: usize = 1;
+    if (wrap) {
+        var x: f32 = 0;
+        for (labels) |label| {
+            const w = ui.measureText(label, theme.font_body).w + 24 + opts.gap;
+            if (x + w > avail and x > 0) {
+                rows += 1;
+                x = 0;
+            }
+            x += w;
+        }
+    }
+    const block = ui.reserve(0, h * @as(f32, @floatFromInt(rows)), true);
+
+    var x = block.x;
+    var y = block.y;
     for (labels, 0..) |label, i| {
         const m = ui.measureText(label, theme.font_body);
-        const h: f32 = 34;
-        const r = ui.reserve(m.w + 24, h, false);
+        const w = m.w + 24;
+        if (wrap and x + w > block.x + avail and x > block.x) {
+            x = block.x;
+            y += h;
+        }
+        const r = t.Rect{ .x = x, .y = y, .w = w, .h = h };
         const it = ui.interactEx(pairId(id, 0x7AB5 +% i), r, true);
         if (it.clicked or it.activated) active.* = i;
         const on = active.* == i;
         if (!on and it.hover) ui.addBox(r, .{ .fill = theme.surface, .radius = 6 });
         ui.addText(.{ .x = r.x + (r.w - m.w) / 2, .y = r.y + (h - m.h) / 2 - 1, .w = m.w, .h = m.h }, label, theme.font_body, if (on) theme.text else theme.secondary);
         if (on) ui.addBox(.{ .x = r.x, .y = r.y + h - 2, .w = r.w, .h = 2 }, .{ .fill = theme.accent });
+        x += w + opts.gap;
     }
 }
 

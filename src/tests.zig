@@ -16,6 +16,7 @@ const t = @import("types.zig");
 test {
     _ = @import("tests_disclosure.zig");
     _ = @import("tests_dials.zig");
+    _ = @import("tests_viz.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

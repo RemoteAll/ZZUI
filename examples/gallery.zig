@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar" };
+const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar", "Viz", "Viz B", "Curves" };
 
 const State = struct {
     page: usize = 0,
@@ -89,6 +89,31 @@ const State = struct {
     playhead: f32 = 2,
     tl_time: [3]f32 = .{ 1, 3, 5 },
     tl_sel: [3]bool = .{ false, false, false },
+
+    // ---- 可视化页
+    viz_pick: i32 = -1,
+
+    // ---- 曲线页
+    curve_state: zzui.curves.CurveState = .{},
+    curve_count: usize = 3,
+    curve_keys: [6]zzui.curves.CurveKey = .{
+        .{ .x = 0, .y = 0, .mode = .free, .out_dx = 0.2, .out_dy = 0.1 },
+        .{ .x = 0.5, .y = 0.7, .mode = .free, .in_dx = -0.15, .in_dy = 0, .out_dx = 0.15, .out_dy = 0 },
+        .{ .x = 1, .y = 1, .mode = .free, .in_dx = -0.2, .in_dy = -0.1 },
+        .{ .x = 0, .y = 0 },
+        .{ .x = 0, .y = 0 },
+        .{ .x = 0, .y = 0 },
+    },
+    grad_state: zzui.curves.GradientState = .{},
+    grad_count: usize = 3,
+    grad_stops: [6]zzui.curves.GradientStop = .{
+        .{ .t = 0, .color = zzui.types.Color.hex(0x2563EB, 255) },
+        .{ .t = 0.5, .color = zzui.types.Color.hex(0x0891B2, 255) },
+        .{ .t = 1, .color = zzui.types.Color.hex(0xFDE68A, 255) },
+        .{ .t = 0, .color = zzui.types.Color.transparent },
+        .{ .t = 0, .color = zzui.types.Color.transparent },
+        .{ .t = 0, .color = zzui.types.Color.transparent },
+    },
 };
 
 // ------------------------------------------------------------------ 页 0：显示与反馈
@@ -138,7 +163,7 @@ fn pageComponents(ui: *zzui.core.Context) void {
         zzui.widgets.heading(ui, "Empty state and timeline", 3);
         zzui.extras.emptyState(ui, "No projects yet", "Create your first project to get started.");
         zzui.extras.timelineItem(ui, "09:12", "Build finished", "zzui-gallery x64 in 3.4s");
-        zzui.extras.timelineItem(ui, "08:40", "Tests passed", "39 cases, 0 failures");
+        zzui.extras.timelineItem(ui, "08:40", "Tests passed", "100 cases, 0 failures");
     }
 }
 
@@ -561,6 +586,119 @@ fn pageCalendar(ui: *zzui.core.Context, st: *State) void {
     }
 }
 
+// ------------------------------------------------------------------ 页 8：可视化（网格与条形）
+
+fn pageViz(ui: *zzui.core.Context, st: *State) void {
+    const items = [_]zzui.viz.VizItem{
+        .{ .label = "Search", .value = 48 },
+        .{ .label = "Direct", .value = 31 },
+        .{ .label = "Social", .value = 21 },
+    };
+    const values = [_]f32{ 2, 5, 9, 4, 7, 1, 8, 3, 6, 5, 9, 2 };
+    const hours = [_][]const u8{ "00", "04", "08", "12", "16", "20" };
+    const days = [_][]const u8{ "Mon", "Tue" };
+
+    zzui.extras.muted(ui, "Heatmap (click a cell)");
+    if (zzui.viz.heatmap(ui, "hm", values[0..], 2, 6, .{ .row_labels = days[0..], .col_labels = hours[0..2].*[0..], .cell = 30 })) |idx| {
+        st.viz_pick = @intCast(idx);
+    }
+
+    zzui.extras.muted(ui, "Calendar heatmap");
+    _ = zzui.viz.calendarHeatmap(ui, "chm", .{ .year = 2026, .month = 11, .day = 2 }, values[0..], .{ .cell = 14 });
+
+    zzui.extras.muted(ui, "Treemap / funnel");
+    {
+        var row = ui.row(.{ .gap = 16 });
+        defer row.end();
+        _ = zzui.viz.treemap(ui, "tm", items[0..], .{ .width = 240, .height = 110 });
+        _ = zzui.viz.funnel(ui, "fn", items[0..], .{ .width = 240, .height = 110 });
+    }
+
+    zzui.extras.muted(ui, "Split bar");
+    _ = zzui.viz.splitBar(ui, "sb", items[0..], .{});
+
+    zzui.extras.muted(ui, "Bar list");
+    _ = zzui.viz.barList(ui, "bl", items[0..], .{ .max_rows = 3 });
+
+    zzui.extras.muted(ui, "Waffle");
+    _ = zzui.viz.waffle(ui, "wf", items[0..], .{ .cell = 12 });
+
+    zzui.widgets.textInt(ui, "last pick = ", @intCast(if (st.viz_pick < 0) 0 else st.viz_pick), "");
+}
+
+// ------------------------------------------------------------------ 页 9：可视化（形状与趋势）
+
+fn pageVizB(ui: *zzui.core.Context, st: *State) void {
+    _ = st;
+    const axes = [_][]const u8{ "speed", "power", "range", "cost", "size" };
+    const a_vals = [_]f32{ 4, 3, 5, 2, 4 };
+    const b_vals = [_]f32{ 2, 5, 3, 4, 2 };
+    const series = [_]zzui.viz.Series{
+        .{ .name = "model A", .values = a_vals[0..] },
+        .{ .name = "model B", .values = b_vals[0..] },
+    };
+    const pts = [_]zzui.viz.Vec2{ .{ .x = 1, .y = 2 }, .{ .x = 2.5, .y = 4 }, .{ .x = 4, .y = 3 }, .{ .x = 5, .y = 6 } };
+    const pts2 = [_]zzui.viz.Vec2{ .{ .x = 1.5, .y = 1 }, .{ .x = 3, .y = 2.5 }, .{ .x = 4.5, .y = 5 } };
+    const sizes = [_]f32{ 1, 3, 2, 4 };
+    const sseries = [_]zzui.viz.ScatterSeries{
+        .{ .name = "run 1", .points = pts[0..], .sizes = sizes[0..] },
+        .{ .name = "run 2", .points = pts2[0..] },
+    };
+    const nodes = [_][]const u8{ "visits", "signups", "paid" };
+    const links = [_]zzui.viz.SankeyLink{
+        .{ .from = 0, .to = 1, .value = 40 },
+        .{ .from = 1, .to = 2, .value = 12 },
+    };
+    const rings = [_]zzui.viz.VizItem{
+        .{ .label = "move", .value = 0.82 },
+        .{ .label = "exercise", .value = 0.55 },
+        .{ .label = "stand", .value = 0.95 },
+    };
+    const candles = [_]zzui.viz.Candle{
+        .{ .open = 100, .high = 106, .low = 98, .close = 104, .volume = 120 },
+        .{ .open = 104, .high = 108, .low = 101, .close = 102, .volume = 90 },
+        .{ .open = 102, .high = 105, .low = 97, .close = 99, .volume = 140 },
+        .{ .open = 99, .high = 103, .low = 96, .close = 102, .volume = 110 },
+        .{ .open = 102, .high = 110, .low = 101, .close = 108, .volume = 160 },
+    };
+
+    zzui.extras.muted(ui, "Radar chart");
+    zzui.viz.radarChart(ui, "rd", series[0..], axes[0..], .{ .size = 200 });
+
+    zzui.extras.muted(ui, "Scatter / bubble");
+    zzui.viz.scatterChart(ui, "sc", sseries[0..], .{ .height = 150, .x_label = "x", .y_label = "y" });
+
+    zzui.extras.muted(ui, "Rings / gauge / sankey");
+    {
+        var row = ui.row(.{ .gap = 20 });
+        defer row.end();
+        zzui.viz.activityRings(ui, "ar", rings[0..], .{ .size = 110, .center = "0.82", .caption = "move", .legend = true });
+        zzui.viz.radialGauge(ui, "rg", 72, 0, 100, .{ .label = "load", .unit = "%", .size = 130, .target = 80, .show_target = true });
+        zzui.viz.sankey(ui, "sk", nodes[0..], links[0..], .{ .width = 240, .height = 120 });
+    }
+
+    zzui.extras.muted(ui, "Candlestick");
+    _ = zzui.viz.candlestick(ui, "cd", candles[0..], .{ .height = 170 });
+}
+
+// ------------------------------------------------------------------ 页 10：曲线与渐变
+
+fn pageCurves(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Curve editor (drag keys, Shift+click adds, Alt+click toggles bezier)");
+    _ = zzui.curves.curveEditor(ui, "cv", st.curve_keys[0..], &st.curve_count, &st.curve_state, .{ .height = 200, .x_label = "Time", .y_label = "Value" });
+
+    zzui.extras.muted(ui, "Gradient editor (drag stops, Shift+click adds)");
+    _ = zzui.curves.gradientEditor(ui, "gr", st.grad_stops[0..], &st.grad_count, &st.grad_state, .{ .width = 260 });
+
+    zzui.extras.muted(ui, "Sampled value");
+    {
+        const y = zzui.curves.curveEval(st.curve_keys[0..st.curve_count], 0.25);
+        var buf: [24]u8 = undefined;
+        const txt = zzui.num.fixed(&buf, y, 3);
+        _ = zzui.widgets.text(ui, txt);
+    }
+}
+
 // ------------------------------------------------------------------ 页面装配
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -568,7 +706,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     defer col.end();
 
     zzui.widgets.heading(ui, "Component gallery", 2);
-    zzui.widgets.secondary(ui, "83 components across ten families. Switch pages with the tabs.");
+    zzui.widgets.secondary(ui, "93 components across twelve families. Switch pages with the tabs.");
     zzui.controls.tabs(ui, "gallery-pages", page_names[0..], &st.page);
 
     var body = ui.scroll(.{ .id = "gallery-body", .height = ui.height - 190, .gap = 14 });
@@ -582,7 +720,10 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         4 => pageShell(ui, st),
         5 => pageFeedback(ui, st),
         6 => pageTools(ui, st),
-        else => pageCalendar(ui, st),
+        7 => pageCalendar(ui, st),
+        8 => pageViz(ui, st),
+        9 => pageVizB(ui, st),
+        else => pageCurves(ui, st),
     }
 }
 
@@ -614,6 +755,9 @@ fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-10")) return runShot(10);
+    if (hasFlag(cmdline, "--shot-9")) return runShot(9);
+    if (hasFlag(cmdline, "--shot-8")) return runShot(8);
     if (hasFlag(cmdline, "--shot-7")) return runShot(7);
     if (hasFlag(cmdline, "--shot-6")) return runShot(6);
     if (hasFlag(cmdline, "--shot-5")) return runShot(5);
@@ -648,13 +792,20 @@ fn runOnce() i32 {
     return 0;
 }
 
-/// 输出文件名：`zzui-gallery-p<N>.bmp`（手工拼，避免引入 fmt）。
+/// 输出文件名：`zzui-gallery-p<N>.bmp`（手工拼，避免引入 fmt；支持两位数页码）。
 fn shotName(buf: []u8, page: usize) []const u8 {
     const prefix = "zzui-gallery-p";
     @memcpy(buf[0..prefix.len], prefix);
-    buf[prefix.len] = '0' + @as(u8, @intCast(@min(page, 9)));
-    @memcpy(buf[prefix.len + 1 .. prefix.len + 5], ".bmp");
-    return buf[0 .. prefix.len + 5];
+    var n: usize = prefix.len;
+    if (page >= 10) {
+        buf[n] = '0' + @as(u8, @intCast(page / 10));
+        n += 1;
+    }
+    buf[n] = '0' + @as(u8, @intCast(page % 10));
+    n += 1;
+    @memcpy(buf[n .. n + 4], ".bmp");
+    n += 4;
+    return buf[0..n];
 }
 
 /// 隐藏窗口真渲染（含系统字体文本）第 `page` 页。

@@ -9,6 +9,7 @@
 //!   }
 pub const core = @import("core.zig");
 pub const types = @import("types.zig");
+pub const num = @import("num.zig");
 pub const theme = @import("theme.zig");
 pub const widgets = @import("widgets.zig");
 pub const extras = @import("extras.zig");
@@ -22,6 +23,8 @@ pub const disclosure = @import("disclosure.zig");
 pub const actions = @import("actions.zig");
 pub const dials = @import("dials.zig");
 pub const codeview = @import("codeview.zig");
+pub const viz = @import("viz.zig");
+pub const curves = @import("curves.zig");
 pub const month = @import("month.zig");
 pub const timeline = @import("timeline.zig");
 pub const render = @import("render.zig");

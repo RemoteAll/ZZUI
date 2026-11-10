@@ -159,7 +159,7 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     Skip "shot" "zzui-hello-x64.exe not found"
 }
 
-Write-Host "== 1.6 gallery (8 pages, all families) =="
+Write-Host "== 1.6 gallery (11 pages, all families) =="
 if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     $tmp3 = Join-Path $env:TEMP 'zzui-regression'
     if (-not (Test-Path $tmp3)) { New-Item -ItemType Directory -Path $tmp3 -Force | Out-Null }
@@ -177,7 +177,7 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     }
 
     # 4 页逐页真渲染：每页都要有文字像素（证明该页控件真的画了）
-    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7) {
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10) {
         $bmp = Join-Path $tmp3 ("zzui-gallery-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @("--shot-$pg") $tmp3
