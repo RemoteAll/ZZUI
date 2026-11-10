@@ -71,11 +71,15 @@ const Frame = struct {
     cursor: f32 = 0,
     cross: f32 = 0,
     children: usize = 0,
+    /// 绝对定位（浮层面板）：不推进父容器游标。
+    absolute: bool = false,
 };
 
 const Hit = struct {
     id: u64,
     rect: t.Rect,
+    /// 越高越在上层（主树 = 0，浮层从 1 起）。
+    layer: u8 = 0,
 };
 
 pub const ContainerOpts = struct {
@@ -113,6 +117,33 @@ pub const Scope = struct {
     }
 };
 
+pub const PanelOpts = struct {
+    fill: ?t.Color = null,
+    radius: f32 = 0,
+    border: ?t.Color = null,
+    border_width: f32 = 1,
+    pad: f32 = 0,
+    gap: f32 = 0,
+    dir: t.Direction = .column,
+};
+
+pub const OverlayOpts = struct {
+    dim: t.Color = .{ .r = 0, .g = 0, .b = 0, .a = 90 },
+    id: u64 = 0,
+};
+
+/// 浮层作用域：结束后层号回落。
+pub const OverlayScope = struct {
+    ui: *Context,
+    ended: bool = false,
+
+    pub fn end(self: *OverlayScope) void {
+        if (self.ended) return;
+        self.ui.overlay_layer -= 1;
+        self.ended = true;
+    }
+};
+
 pub const Context = struct {
     nodes: [MAX_NODES]Node = undefined,
     node_count: usize = 0,
@@ -136,6 +167,10 @@ pub const Context = struct {
     focus_curr_n: usize = 0,
     focus_id: u64 = 0,
     active_id: u64 = 0,
+    /// 当前浮层层号（主树 0）；点击只给最上层的命中项。
+    overlay_layer: u8 = 0,
+    overlay_backdrop_clicked: bool = false,
+    click_target: u64 = 0,
     /// 帧内字符串池：控件里拼出来的文本（如数字）要拷进来，否则节点会持有失效的栈切片。
     text_pool: [MAX_TEXT_POOL]u8 = undefined,
     text_pool_len: usize = 0,
@@ -154,8 +189,26 @@ pub const Context = struct {
         self.cmd_count = 0;
         self.overlay_count = 0;
         self.text_pool_len = 0;
+        self.overlay_layer = 0;
+        self.overlay_backdrop_clicked = false;
         if (!self.input.down) self.active_id = 0;
         if (self.input.keyPressed(.tab)) self.advanceFocus();
+        // 点击归属：上一帧命中里，包含点击点且层号最高（同层后者胜）的那个。
+        self.click_target = 0;
+        if (self.input.click) |p| {
+            var best_layer: u8 = 0;
+            var found = false;
+            var i: usize = 0;
+            while (i < self.hits_prev_n) : (i += 1) {
+                const h = self.hits_prev[i];
+                if (!h.rect.contains(p.x, p.y)) continue;
+                if (!found or h.layer >= best_layer) {
+                    best_layer = h.layer;
+                    self.click_target = h.id;
+                    found = true;
+                }
+            }
+        }
         self.width = width;
         self.height = height;
         self.stack[0] = .{ .node = null, .parent = 0, .dir = .column, .content_x = 0, .content_y = 0, .width = width };
@@ -241,6 +294,7 @@ pub const Context = struct {
             },
         };
         if (f.node) |n| self.nodes[n].rect = rect;
+        if (f.absolute) return;
         const p = &self.stack[f.parent];
         switch (p.dir) {
             .column => advance(p, rect.h, rect.h),
@@ -370,7 +424,7 @@ pub const Context = struct {
             self.focus_curr_n += 1;
         }
         if (self.hits_curr_n < MAX_HITS) {
-            self.hits_curr[self.hits_curr_n] = .{ .id = id, .rect = rect };
+            self.hits_curr[self.hits_curr_n] = .{ .id = id, .rect = rect, .layer = self.overlay_layer };
             self.hits_curr_n += 1;
         }
         var out = Interaction{};
@@ -379,18 +433,52 @@ pub const Context = struct {
         if (self.input.pressed and out.hover) self.active_id = id;
         out.dragging = self.active_id == id and self.input.down;
         out.pressed = self.active_id == id and self.input.down;
-        if (self.input.click) |p| {
-            var i: usize = 0;
-            while (i < self.hits_prev_n) : (i += 1) {
-                if (self.hits_prev[i].id == id) {
-                    out.clicked = self.hits_prev[i].rect.contains(p.x, p.y);
-                    break;
-                }
-            }
-            if (out.clicked) self.focus_id = id;
-        }
+        out.clicked = self.click_target == id;
+        if (out.clicked) self.focus_id = id;
         out.activated = out.focused and (self.input.keyPressed(.space) or self.input.keyPressed(.enter));
         return out;
+    }
+
+    // ------------------------------------------------------------ 浮层
+    /// 开始一个浮层：遮罩全窗口（层号 +1），之后的控件都算浮层。
+    pub fn beginOverlay(self: *Context, opts: OverlayOpts) OverlayScope {
+        self.overlay_layer +|= 1;
+        const full = t.Rect{ .x = 0, .y = 0, .w = self.width, .h = self.height };
+        const hit = self.interactEx(opts.id ^ 0xBACC0FFEE, full, false);
+        self.overlay_backdrop_clicked = hit.clicked;
+        self.addBox(full, .{ .fill = opts.dim });
+        return .{ .ui = self };
+    }
+
+    pub fn overlayBackdropClicked(self: *Context) bool {
+        return self.overlay_backdrop_clicked;
+    }
+
+    /// 绝对定位面板：节点矩形就是 rect，内部内容从 rect + pad 开始；不推进父容器游标。
+    pub fn panel(self: *Context, rect: t.Rect, opts: PanelOpts) Scope {
+        if (self.depth >= MAX_DEPTH) return .{ .ui = self };
+        const node = self.addNode(.{
+            .kind = .box,
+            .rect = rect,
+            .radius = opts.radius,
+            .fill = opts.fill orelse t.Color.transparent,
+            .border = opts.border orelse t.Color.transparent,
+            .border_width = if (opts.border != null) opts.border_width else 0,
+        });
+        const content_w = rect.w - opts.pad * 2;
+        self.stack[self.depth] = .{
+            .node = node,
+            .parent = self.depth - 1,
+            .dir = opts.dir,
+            .content_x = rect.x + opts.pad,
+            .content_y = rect.y + opts.pad,
+            .width = if (content_w > 0) content_w else 0,
+            .pad = opts.pad,
+            .gap = opts.gap,
+            .absolute = true,
+        };
+        self.depth += 1;
+        return .{ .ui = self };
     }
 
     pub fn idOf(label: []const u8) u64 {
@@ -582,8 +670,8 @@ test "click is matched against last frame rect" {
     ui.paint();
 
     // 下一帧：点击落在上一帧矩形内
-    ui.begin(400, 300);
     ui.input = .{ .mouse = .{ .x = 10, .y = 10 }, .click = .{ .x = 10, .y = 10 } };
+    ui.begin(400, 300);
     const r2 = ui.interact(id, rect);
     try std.testing.expect(r2.clicked);
 }

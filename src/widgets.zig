@@ -50,6 +50,12 @@ pub fn button(ui: *core.Context, label: []const u8, opts: ButtonOpts) bool {
     const h: f32 = 36;
     const w = if (opts.width > 0) opts.width else m.w + 28;
     const rect = ui.reserve(w, h, false);
+    return buttonRect(ui, rect, label, opts);
+}
+
+/// 在指定矩形里画按钮（浮层等绝对定位场景）。
+pub fn buttonRect(ui: *core.Context, rect: t.Rect, label: []const u8, opts: ButtonOpts) bool {
+    const m = ui.measureText(label, theme.font_body);
     const it = ui.interactEx(core.Context.idOf(label) ^ 0x9E3779B97F4A7C15, rect, true);
 
     switch (opts.variant) {
@@ -341,4 +347,58 @@ pub fn input(
         ui.addOverlayLine(.{ .x = cx, .y = rect.y + 8 }, .{ .x = cx, .y = rect.y + rect.h - 8 }, 1.5, theme.text);
     }
     return changed;
+}
+
+pub const DialogOpts = struct {
+    width: f32 = 320,
+    height: f32 = 176,
+    title: []const u8 = "",
+    message: []const u8 = "",
+    ok_label: []const u8 = "OK",
+    cancel_label: []const u8 = "Cancel",
+};
+
+pub const DialogResult = enum { none, ok, cancel };
+
+/// 模态对话框：遮罩 + 居中卡片 + 右对齐按钮；点遮罩 / Esc / 取消都会关闭。
+pub fn dialog(ui: *core.Context, open: *bool, opts: DialogOpts) DialogResult {
+    var ov = ui.beginOverlay(.{});
+    defer ov.end();
+
+    const w = opts.width;
+    const h = opts.height;
+    const x = (ui.width - w) / 2;
+    const y = (ui.height - h) / 2;
+    var card = ui.panel(.{ .x = x, .y = y, .w = w, .h = h }, .{
+        .fill = theme.surface,
+        .radius = 12,
+        .border = theme.border,
+        .pad = 20,
+        .gap = 10,
+    });
+    defer card.end();
+
+    _ = ui.textRun(opts.title, 18, theme.text);
+    _ = ui.textRun(opts.message, theme.font_body, theme.secondary);
+
+    const btn_h: f32 = 34;
+    const btn_w: f32 = 88;
+    const by = y + h - 20 - btn_h;
+    const ok_x = x + w - 20 - btn_w;
+    const cancel_x = ok_x - 8 - btn_w;
+
+    var result: DialogResult = .none;
+    if (buttonRect(ui, .{ .x = cancel_x, .y = by, .w = btn_w, .h = btn_h }, opts.cancel_label, .{})) {
+        open.* = false;
+        result = .cancel;
+    }
+    if (buttonRect(ui, .{ .x = ok_x, .y = by, .w = btn_w, .h = btn_h }, opts.ok_label, .{ .variant = .primary })) {
+        open.* = false;
+        result = .ok;
+    }
+    if (result == .none and (ui.overlayBackdropClicked() or ui.input.keyPressed(.escape))) {
+        open.* = false;
+        result = .cancel;
+    }
+    return result;
 }

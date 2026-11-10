@@ -13,8 +13,8 @@ test "checkbox toggles on click (last-frame hit test)" {
     ui.paint();
 
     // 第二帧：点击落在上一帧矩形内
-    ui.begin(300, 200);
     ui.input = .{ .mouse = .{ .x = 10, .y = 10 }, .click = .{ .x = 10, .y = 10 } };
+    ui.begin(300, 200);
     widgets.checkbox(&ui, "auto", &value);
     ui.paint();
     try std.testing.expect(value);
@@ -173,4 +173,60 @@ test "input edits text and moves the caret" {
     ui.paint();
     try std.testing.expectEqualStrings("a你", buf[0..len]);
     try std.testing.expectEqual(@as(usize, 4), caret);
+}
+
+test "dialog blocks page clicks and closes on backdrop" {
+    var ui = core.Context{};
+    var page: u32 = 0;
+    var open = true;
+
+    ui.begin(400, 300);
+    if (widgets.button(&ui, "page", .{ .width = 360 })) page += 1;
+    _ = widgets.dialog(&ui, &open, .{ .title = "T", .message = "M" });
+    ui.paint();
+
+    ui.input = .{ .mouse = .{ .x = 100, .y = 20 }, .click = .{ .x = 100, .y = 20 } };
+    ui.begin(400, 300);
+    if (widgets.button(&ui, "page", .{ .width = 360 })) page += 1;
+    _ = widgets.dialog(&ui, &open, .{ .title = "T", .message = "M" });
+    ui.paint();
+
+    try std.testing.expectEqual(@as(u32, 0), page);
+    try std.testing.expect(!open);
+}
+
+test "dialog OK button returns ok" {
+    var ui = core.Context{};
+    var open = true;
+
+    ui.begin(400, 300);
+    _ = widgets.dialog(&ui, &open, .{ .title = "T", .message = "M" });
+    ui.paint();
+
+    // OK 居中按钮中心：x=296, y=201（400x300 窗口，320x176 卡片）
+    ui.input = .{ .mouse = .{ .x = 296, .y = 201 }, .click = .{ .x = 296, .y = 201 } };
+    ui.begin(400, 300);
+    const r = widgets.dialog(&ui, &open, .{ .title = "T", .message = "M" });
+    ui.paint();
+
+    try std.testing.expectEqual(widgets.DialogResult.ok, r);
+    try std.testing.expect(!open);
+}
+
+test "escape closes the dialog" {
+    var ui = core.Context{};
+    var open = true;
+
+    ui.begin(400, 300);
+    _ = widgets.dialog(&ui, &open, .{ .title = "T", .message = "M" });
+    ui.paint();
+
+    ui.input = .{};
+    ui.input.addKey(.escape);
+    ui.begin(400, 300);
+    const r = widgets.dialog(&ui, &open, .{ .title = "T", .message = "M" });
+    ui.paint();
+
+    try std.testing.expectEqual(widgets.DialogResult.cancel, r);
+    try std.testing.expect(!open);
 }

@@ -254,6 +254,7 @@ fn mapKey(vk: u8) t.Key {
         8 => .backspace,
         9 => .tab,
         13 => .enter,
+        27 => .escape,
         32 => .space,
         35 => .end,
         36 => .home,

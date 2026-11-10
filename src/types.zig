@@ -49,6 +49,8 @@ pub const Key = enum(u8) {
     backspace = 8,
     tab = 9,
     enter = 13,
+    escape = 27,
+    space = 32,
     end = 35,
     home = 36,
     left = 37,
@@ -56,7 +58,6 @@ pub const Key = enum(u8) {
     right = 39,
     down = 40,
     delete = 46,
-    space = 32,
 };
 
 /// 每帧输入快照。`click` 只在「按下并在同一控件内抬起」的那一帧出现在这里。

@@ -12,6 +12,7 @@ const State = struct {
     name: [64]u8 = @splat(0),
     name_len: usize = 0,
     name_caret: usize = 0,
+    dialog_open: bool = false,
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -25,6 +26,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     var row = ui.row(.{ .gap = 8 });
     defer row.end();
     if (zzui.widgets.button(ui, "Click me", .{ .variant = .primary })) st.clicks += 1;
+    if (zzui.widgets.button(ui, "Open dialog", .{})) st.dialog_open = true;
     zzui.widgets.textInt(ui, "Clicked ", st.clicks, " times");
 }
 
@@ -61,6 +63,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     while (app.next()) {
         build(&app.ui, &st);
         buildControls(&app.ui, &st);
+        buildOverlays(&app.ui, &st);
         app.end();
     }
     return 0;
@@ -82,7 +85,9 @@ fn runShot() i32 {
     defer app.deinit();
     if (!app.next()) return 6;
     var st = State{};
+    st.dialog_open = true;
     buildOnce(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
     app.end();
     app.saveSurface("zzui-shot.bmp") catch return 7;
     return 0;
@@ -91,6 +96,15 @@ fn runShot() i32 {
 fn buildOnce(ui: *zzui.core.Context, st: *State) void {
     build(ui, st);
     buildControls(ui, st);
+}
+
+fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
+    if (!st.dialog_open) return;
+    _ = zzui.widgets.dialog(ui, &st.dialog_open, .{
+        .title = "Delete project",
+        .message = "This action cannot be undone.",
+        .ok_label = "Delete",
+    });
 }
 
 fn hasFlag(cmd: [*:0]u16, flag: []const u8) bool {

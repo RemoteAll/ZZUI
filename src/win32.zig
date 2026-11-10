@@ -695,6 +695,7 @@ pub const WM_LBUTTONDOWN: UINT = 0x0201;
 pub const WM_LBUTTONUP: UINT = 0x0202;
 pub const WM_KEYDOWN: UINT = 0x0100;
 pub const WM_CHAR: UINT = 0x0102;
+pub const VK_ESCAPE: UINT = 0x001B;
 pub const WM_SETCURSOR: UINT = 0x0020;
 pub const IDC_ARROW: usize = 32512;
 
