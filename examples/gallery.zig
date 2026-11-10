@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell" };
+const page_names = [_][]const u8{ "Components", "Forms", "Data", "Charts", "Shell", "Feedback", "Dials", "Calendar" };
 
 const State = struct {
     page: usize = 0,
@@ -51,6 +51,44 @@ const State = struct {
     doc_tab: usize = 0,
     doc_closed: [3]bool = @splat(false),
     last_pick: u32 = 0,
+
+    // ---- 反馈页（披露族 + 操作件族）
+    banner_open: bool = true,
+    cp_open: bool = false,
+    cp_anchor: zzui.types.Rect = .{},
+    step_done: [3]bool = @splat(false),
+    et_expanded: bool = false,
+    ec_open: bool = false,
+    conf_armed: bool = false,
+    conf_since: f64 = 0,
+    ie_editing: bool = false,
+    ie_caret: usize = 4,
+    ie_buf: [32]u8 = @splat(0),
+    ie_len: usize = 4,
+    scrub_state: zzui.actions.ScrubState = .{},
+    scrub_v: f32 = 42,
+    rec_combo: zzui.actions.KeyCombo = .{},
+    money_state: zzui.actions.MoneyState = .{},
+    money_v: f64 = 1299.5,
+    react_a: bool = true,
+    react_a_n: u32 = 4,
+    react_b: bool = false,
+    react_b_n: u32 = 1,
+
+    // ---- 工具页（旋钮族 / 代码呈现族 / 月历族 / 时间线族）
+    knob_state: zzui.dials.KnobState = .{},
+    knob_v: f32 = 40,
+    fader_state: zzui.dials.FaderState = .{},
+    fader_v: f32 = 0.65,
+    meter_state: zzui.dials.LevelMeterState = .{},
+    json_state: zzui.codeview.JsonState = .{},
+    hex_sel: zzui.codeview.HexSelection = .{},
+    cal_month: zzui.month.Date = .{ .year = 2026, .month = 11, .day = 1 },
+    cal_sel: zzui.month.Date = .{ .year = 2026, .month = 11, .day = 10 },
+    tl_state: zzui.timeline.TimelineState = .{},
+    playhead: f32 = 2,
+    tl_time: [3]f32 = .{ 1, 3, 5 },
+    tl_sel: [3]bool = .{ false, false, false },
 };
 
 // ------------------------------------------------------------------ 页 0：显示与反馈
@@ -352,6 +390,177 @@ fn pageShell(ui: *zzui.core.Context, st: *State) void {
     zzui.widgets.textInt(ui, "action id = ", st.last_pick, "");
 }
 
+// ------------------------------------------------------------------ 页 5：反馈（披露族 + 操作件族）
+
+fn pageFeedback(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Banner");
+    _ = zzui.disclosure.banner(ui, "banner", "Scheduled maintenance tonight 22:00-23:00 UTC.", &st.banner_open, .{ .tone = .warn, .action = "Details" });
+
+    zzui.extras.muted(ui, "Countdown");
+    {
+        var row = ui.row(.{ .gap = 6 });
+        defer row.end();
+        zzui.disclosure.countdown(ui, "countdown", 90061, .{});
+    }
+
+    zzui.extras.muted(ui, "Onboarding checklist");
+    {
+        const titles = [_][]const u8{ "Create a project", "Invite a teammate", "Connect a repository" };
+        const descs = [_][]const u8{ "Start from a template or an empty folder.", "", "Optional: link GitHub for PR previews." };
+        var steps = [_]zzui.disclosure.CheckStep{
+            .{ .title = titles[0], .description = descs[0], .action = "Start", .done = st.step_done[0] },
+            .{ .title = titles[1], .description = descs[1], .done = st.step_done[1] },
+            .{ .title = titles[2], .description = descs[2], .done = st.step_done[2] },
+        };
+        if (zzui.disclosure.checklist(ui, "checklist", steps[0..], .{ .title = "Getting started", .description = "Three steps to your first build" })) |idx| {
+            st.last_pick = @intCast(2000 + idx);
+        }
+        var i: usize = 0;
+        while (i < 3) : (i += 1) st.step_done[i] = steps[i].done;
+    }
+
+    zzui.extras.muted(ui, "Expandable text");
+    {
+        var et = zzui.disclosure.ExpandableTextState{ .expanded = st.et_expanded };
+        zzui.disclosure.expandableText(ui, "etext", "ZZUI keeps every widget in caller-owned state: the framework stores no tree, no event queue and no animation cache. That is why a build is under 100 functions per family and the shipped binary stays small.", &et, .{ .lines = 2 });
+        st.et_expanded = et.expanded;
+    }
+
+    zzui.extras.muted(ui, "Expandable card");
+    {
+        var ec = zzui.disclosure.ExpandableCardState{ .open = st.ec_open };
+        if (zzui.disclosure.expandableCardBegin(ui, "ecard", "Advanced options", &ec, .{ .description = "Shown when collapsed", .badge = "beta", .badge_tone = .accent })) {
+            zzui.widgets.text(ui, "Body content appears only while the card is open.");
+            _ = zzui.widgets.button(ui, "Apply", .{ .variant = .primary });
+        }
+        zzui.disclosure.expandableCardEnd(ui);
+        st.ec_open = ec.open;
+    }
+
+    zzui.extras.muted(ui, "Confirm popover");
+    {
+        const br = zzui.widgets.buttonEx(ui, "Archive project", .{});
+        if (br.clicked) st.cp_open = !st.cp_open;
+        st.cp_anchor = br.rect;
+        switch (zzui.disclosure.confirmPopover(ui, "cp", st.cp_anchor, &st.cp_open, .{
+            .title = "Archive this project?",
+            .description = "It can be restored for 30 days.",
+            .confirm_label = "Archive",
+        })) {
+            .confirmed => st.last_pick = 2100,
+            .canceled, .dismissed => st.last_pick = 2101,
+            .none => {},
+        }
+    }
+
+    zzui.extras.muted(ui, "Confirm button (needs two clicks)");
+    {
+        var cs = zzui.actions.ConfirmState{ .armed = st.conf_armed, .since = st.conf_since };
+        if (zzui.actions.confirmButton(ui, "Delete project", &cs, .{ .confirm_label = "Click again to delete" })) {
+            st.last_pick = 2200;
+        }
+        st.conf_armed = cs.armed;
+        st.conf_since = cs.since;
+    }
+
+    zzui.extras.muted(ui, "Inline edit");
+    {
+        if (st.ie_len == 0) {
+            @memcpy(st.ie_buf[0..4], "name");
+            st.ie_len = 4;
+        }
+        var ies = zzui.actions.InlineEditState{ .editing = st.ie_editing, .caret = st.ie_caret };
+        const r = zzui.actions.inlineEdit(ui, "inline-edit", &st.ie_buf, &st.ie_len, &ies, .{});
+        if (r.committed) st.last_pick = 2300;
+        st.ie_editing = ies.editing;
+        st.ie_caret = ies.caret;
+    }
+
+    zzui.extras.muted(ui, "Scrub field (drag sideways)");
+    _ = zzui.actions.scrub(ui, "Opacity", &st.scrub_v, 0, 100, &st.scrub_state, .{ .suffix = "%", .decimals = 0 });
+
+    zzui.extras.muted(ui, "Money input");
+    _ = zzui.actions.moneyInput(ui, "money", &st.money_v, &st.money_state, .{ .label = "Amount", .symbol = "$", .hint = "USD" });
+
+    zzui.extras.muted(ui, "Shortcut recorder");
+    _ = zzui.actions.shortcutRecorder(ui, "recorder", &st.rec_combo, .{ .width = 220 });
+
+    zzui.extras.muted(ui, "Reactions");
+    {
+        var items = [_]zzui.actions.Reaction{
+            .{ .icon = "+1", .count = st.react_a_n, .active = st.react_a },
+            .{ .icon = "heart", .count = st.react_b_n, .active = st.react_b },
+        };
+        _ = zzui.actions.reactions(ui, "rx", items[0..]);
+        st.react_a = items[0].active;
+        st.react_a_n = items[0].count;
+        st.react_b = items[1].active;
+        st.react_b_n = items[1].count;
+    }
+}
+
+// ------------------------------------------------------------------ 页 6：工具（旋钮 / 代码 / 月历 / 时间线）
+
+fn pageTools(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Knob / fader / level meter");
+    {
+        var row = ui.row(.{ .gap = 20 });
+        defer row.end();
+        _ = zzui.dials.knob(ui, "gain", &st.knob_v, 0, 100, &st.knob_state, .{ .label = "Gain", .unit = "%", .step = 1 });
+        const ticks = [_]f32{ 0, 0.5, 1 };
+        _ = zzui.dials.fader(ui, "level", &st.fader_v, 0, 1, &st.fader_state, .{ .length = 90, .label = "Level", .ticks = ticks[0..] });
+        const levels = [_]f32{ 0.72, 0.31 };
+        zzui.dials.levelMeter(ui, "meter", levels[0..], &st.meter_state, .{ .length = 90, .segmented = true });
+    }
+
+    zzui.extras.muted(ui, "Code block");
+    zzui.codeview.codeBlock(ui, "code", "pub fn main() !void {\n    var ui = Context{};\n    ui.begin(720, 480);\n    _ = widgets.button(&ui, \"Run\", .{});\n}", .{
+        .title = "main.zig",
+        .lang = "zig",
+        .highlight_from = 3,
+        .highlight_to = 3,
+    });
+
+    zzui.extras.muted(ui, "JSON view (click a triangle)");
+    _ = zzui.codeview.jsonView(ui, "json", "{\"name\":\"zzui\",\"version\":\"0.1.0\",\"tags\":[\"ui\",\"zig\",\"small\"],\"nested\":{\"depth\":2}}", &st.json_state, .{});
+
+    zzui.extras.muted(ui, "Hex view");
+    _ = zzui.codeview.hexView(ui, "hex", "ZZUI hex view sample: 16 bytes per row, ASCII on the right.", &st.hex_sel, .{ .height = 96 });
+}
+
+// ------------------------------------------------------------------ 页 7：月历与时间线
+
+fn pageCalendar(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Month calendar");
+    {
+        const events = [_]zzui.month.MonthEvent{
+            .{ .title = "Release", .start = .{ .year = 2026, .month = 11, .day = 10 }, .tone = .accent },
+            .{ .title = "Review", .start = .{ .year = 2026, .month = 11, .day = 18 }, .tone = .warn },
+        };
+        _ = zzui.month.monthCalendar(ui, "cal", &st.cal_month, events[0..], .{
+            .selected = &st.cal_sel,
+            .cell_height = 48,
+            .today = .{ .year = 2026, .month = 11, .day = 10 },
+        });
+    }
+
+    zzui.extras.muted(ui, "Timeline editor");
+    {
+        var keys = [_]zzui.timeline.TimelineKey{
+            .{ .time = st.tl_time[0], .selected = st.tl_sel[0] },
+            .{ .time = st.tl_time[1], .selected = st.tl_sel[1] },
+            .{ .time = st.tl_time[2], .selected = st.tl_sel[2] },
+        };
+        var tracks = [_]zzui.timeline.TimelineTrack{.{ .name = "Position", .keys = keys[0..] }};
+        _ = zzui.timeline.timelineEditor(ui, "timeline", tracks[0..], &st.playhead, &st.tl_state, .{ .height = 110, .time_max = 8 });
+        var i: usize = 0;
+        while (i < 3) : (i += 1) {
+            st.tl_time[i] = keys[i].time;
+            st.tl_sel[i] = keys[i].selected;
+        }
+    }
+}
+
 // ------------------------------------------------------------------ 页面装配
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -359,7 +568,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     defer col.end();
 
     zzui.widgets.heading(ui, "Component gallery", 2);
-    zzui.widgets.secondary(ui, "59 components across seven families. Switch pages with the tabs.");
+    zzui.widgets.secondary(ui, "83 components across ten families. Switch pages with the tabs.");
     zzui.controls.tabs(ui, "gallery-pages", page_names[0..], &st.page);
 
     var body = ui.scroll(.{ .id = "gallery-body", .height = ui.height - 190, .gap = 14 });
@@ -370,7 +579,10 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         1 => pageForms(ui, st),
         2 => pageData(ui, st),
         3 => pageCharts(ui, st),
-        else => pageShell(ui, st),
+        4 => pageShell(ui, st),
+        5 => pageFeedback(ui, st),
+        6 => pageTools(ui, st),
+        else => pageCalendar(ui, st),
     }
 }
 
@@ -402,6 +614,9 @@ fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-7")) return runShot(7);
+    if (hasFlag(cmdline, "--shot-6")) return runShot(6);
+    if (hasFlag(cmdline, "--shot-5")) return runShot(5);
     if (hasFlag(cmdline, "--shot-4")) return runShot(4);
     if (hasFlag(cmdline, "--shot-3")) return runShot(3);
     if (hasFlag(cmdline, "--shot-2")) return runShot(2);
@@ -448,6 +663,11 @@ fn runShot(page: usize) i32 {
     defer app.deinit();
     if (!app.next()) return 6;
     var st = State{ .page = page };
+    // 第一帧还在用估算宽度（字体尚未挂上），排版会偏；第二帧用真实测量才准。
+    build(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
+    app.end();
+    if (!app.next()) return 6;
     build(&app.ui, &st);
     buildOverlays(&app.ui, &st);
     app.end();

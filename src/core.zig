@@ -22,6 +22,8 @@ pub const Node = struct {
     text: []const u8 = "",
     font_size: f32 = theme.font_body,
     text_color: t.Color = theme.text,
+    /// 等宽字体（代码块 / 十六进制视图）。后端按 (size, weight, mono) 缓存字体。
+    mono: bool = false,
     /// 构建时的裁剪矩形（零尺寸 = 不裁剪）。
     clip: ?t.Rect = null,
     /// 构建时的层号（主树 0，浮层从 1 起）。
@@ -43,6 +45,7 @@ pub const TextCmd = struct {
     color: t.Color,
     clip: ?t.Rect = null,
     layer: u8 = 0,
+    mono: bool = false,
 };
 
 pub const LineCmd = struct {
@@ -459,6 +462,11 @@ pub const Context = struct {
         _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color });
     }
 
+    /// 等宽文本（代码块 / 十六进制视图）：只有字体族不同，其余同 `addText`。
+    pub fn addMonoText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {
+        _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color, .mono = true });
+    }
+
     /// 文本占位 + 文本节点。column 里按内容宽自动换行，row 里按测量宽度单行。
     pub fn textRun(self: *Context, s: []const u8, size: f32, color: t.Color) t.Rect {
         const owned = self.frameStr(s);
@@ -685,7 +693,7 @@ pub const Context = struct {
                     if (n.border_width > 0 and n.border.a > 0) self.pushBorder(n.rect, n.border_width, n.border, n.clip, n.layer);
                 },
                 .text => {
-                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer } });
+                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer, .mono = n.mono } });
                 },
             }
         }

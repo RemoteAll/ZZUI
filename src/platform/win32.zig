@@ -11,6 +11,8 @@ const bmpfile = @import("../bmpfile.zig");
 const WM_QUIT: u32 = 0x0012;
 const cls_main = std.unicode.utf8ToUtf16LeStringLiteral("ZZUIMain");
 const face_ui = std.unicode.utf8ToUtf16LeStringLiteral("Microsoft YaHei UI");
+/// 等宽字体（代码块 / 十六进制视图）；Consolas 是 Win7+ 自带的等宽字体。
+const face_mono = std.unicode.utf8ToUtf16LeStringLiteral("Consolas");
 
 var g_mouse: t.Point = .{};
 var g_down: bool = false;
@@ -40,7 +42,8 @@ pub const Backend = struct {
     px_h: u32 = 0,
     dpi: f32 = 1,
     input: t.Input = .{},
-    fonts: [8]FontSlot = @splat(.{}),
+    /// 字体缓存：(字号, 字重, 等宽) 组合。等宽与常规各占几档，16 足够且只影响栈上内存。
+    fonts: [16]FontSlot = @splat(.{}),
 
     pub fn init(title: []const u8, width: u32, height: u32, show: bool) !Backend {
         _ = w.SetProcessDPIAware();
@@ -114,6 +117,12 @@ pub const Backend = struct {
             self.input.addKey(mapKey(g_keys[ki]));
         }
         g_key_count = 0;
+        self.input.mods = .{
+            .ctrl = isDown(w.GetKeyState(w.VK_CONTROL)),
+            .shift = isDown(w.GetKeyState(w.VK_SHIFT)),
+            .alt = isDown(w.GetKeyState(w.VK_MENU)),
+            .win = isDown(w.GetKeyState(w.VK_LWIN)),
+        };
         self.input.chars_len = 0;
         if (g_chars_len > 0) {
             self.input.addCharBytes(g_chars[0..g_chars_len]);
@@ -191,7 +200,7 @@ pub const Backend = struct {
 
     pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {
         const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
-        const font = self.fontFor(size_px) orelse return .{ .w = 0, .h = size_px * 1.35 };
+        const font = self.fontFor(size_px, false) orelse return .{ .w = 0, .h = size_px * 1.35 };
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, s);
         const old = w.SelectObject(dc, font) orelse return .{ .w = 0, .h = size_px * 1.35 };
@@ -205,7 +214,7 @@ pub const Backend = struct {
     }
 
     fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {
-        const font = self.fontFor(c.size) orelse return;
+        const font = self.fontFor(c.size, c.mono) orelse return;
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, c.text);
         const old = w.SelectObject(dc, font) orelse return;
@@ -230,14 +239,15 @@ pub const Backend = struct {
         _ = w.SelectObject(dc, old);
     }
 
-    fn fontFor(self: *Backend, size_px: f32) ?w.HFONT {
+    fn fontFor(self: *Backend, size_px: f32, mono: bool) ?w.HFONT {
         const weight: i32 = if (size_px >= 20) 600 else 400;
-        const key = size_px * 1000 + @as(f32, @floatFromInt(weight));
+        const key = size_px * 1000 + @as(f32, @floatFromInt(weight)) + (if (mono) @as(f32, 500_000) else 0);
         for (&self.fonts) |*slot| {
             if (slot.font != null and slot.key == key) return slot.font;
         }
         const height: i32 = -@as(i32, @intFromFloat(@round(size_px * self.dpi)));
-        const font = w.CreateFontW(height, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 0, 0, face_ui);
+        const face = if (mono) face_mono else face_ui;
+        const font = w.CreateFontW(height, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 0, 0, face);
         for (&self.fonts) |*slot| {
             if (slot.font == null) {
                 slot.* = .{ .key = key, .font = font };
@@ -286,21 +296,12 @@ fn mouseFrom(lp: w.LPARAM) t.Point {
 }
 
 fn mapKey(vk: u8) t.Key {
-    return switch (vk) {
-        8 => .backspace,
-        9 => .tab,
-        13 => .enter,
-        27 => .escape,
-        32 => .space,
-        35 => .end,
-        36 => .home,
-        37 => .left,
-        38 => .up,
-        39 => .right,
-        40 => .down,
-        46 => .delete,
-        else => .unknown,
-    };
+    return t.Key.fromVirtualKey(vk);
+}
+
+/// `GetKeyState` 返回 i16，最高位为「按下」；不能写成 `& 0x8000`（i16 放不下 32768）。
+fn isDown(state: i16) bool {
+    return state < 0;
 }
 
 /// WM_CHAR 给的是 UTF-16 码元：控制字符交给 WM_KEYDOWN 处理；代理对合并后转 UTF-8。

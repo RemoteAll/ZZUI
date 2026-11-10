@@ -522,6 +522,12 @@ pub extern "user32" fn GetSystemMetrics(nIndex: i32) callconv(.winapi) i32;
 pub const SM_CXSCREEN: i32 = 0;
 pub const SM_CXVSCROLL: i32 = 2;
 pub const SM_CYSCREEN: i32 = 1;
+/// 修饰键状态（高位为按下）。VK 与 `types.Key` 同值。
+pub extern "user32" fn GetKeyState(nVirtKey: i32) callconv(.winapi) i16;
+pub const VK_SHIFT: i32 = 0x10;
+pub const VK_CONTROL: i32 = 0x11;
+pub const VK_MENU: i32 = 0x12;
+pub const VK_LWIN: i32 = 0x5B;
 pub extern "user32" fn SetTimer(hWnd: ?HWND, nIDEvent: usize, uElapse: UINT, lpTimerFunc: ?*const anyopaque) callconv(.winapi) usize;
 pub extern "user32" fn KillTimer(hWnd: ?HWND, uIDEvent: usize) callconv(.winapi) BOOL;
 pub extern "user32" fn EnableWindow(hWnd: HWND, bEnable: BOOL) callconv(.winapi) BOOL;

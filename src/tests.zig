@@ -12,6 +12,12 @@ const chrome = @import("chrome.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
+// 披露族与操作件族的测试放在独立文件，这里引入即可（Zig 会一并编译运行）。
+test {
+    _ = @import("tests_disclosure.zig");
+    _ = @import("tests_dials.zig");
+}
+
 test "checkbox toggles on click (last-frame hit test)" {
     var ui = core.Context{};
     var value = false;

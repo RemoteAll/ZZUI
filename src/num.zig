@@ -78,3 +78,86 @@ pub fn percent(buf: []u8, ratio: f32) []const u8 {
     }
     return digits;
 }
+
+/// 金额文本：整数部分每三位一个逗号（`1234567.5` → `1,234,567.50`）。
+/// 同样只用整数定点，**不引入 `std.fmt` 浮点格式化**。
+pub fn money(buf: []u8, v: f32, decimals: u8) []const u8 {
+    var tmp: [28]u8 = undefined;
+    const plain = fixed(&tmp, v, decimals);
+
+    var dot: usize = plain.len;
+    var i: usize = 0;
+    while (i < plain.len) : (i += 1) {
+        if (plain[i] == '.') {
+            dot = i;
+            break;
+        }
+    }
+    var start: usize = 0;
+    var n: usize = 0;
+    if (plain.len > 0 and plain[0] == '-') {
+        if (n < buf.len) {
+            buf[n] = '-';
+            n += 1;
+        }
+        start = 1;
+    }
+    i = start;
+    while (i < dot) : (i += 1) {
+        const left = dot - i;
+        if (n < buf.len) {
+            buf[n] = plain[i];
+            n += 1;
+        }
+        if (left > 1 and (left - 1) % 3 == 0 and n < buf.len) {
+            buf[n] = ',';
+            n += 1;
+        }
+    }
+    i = dot;
+    while (i < plain.len) : (i += 1) {
+        if (n < buf.len) {
+            buf[n] = plain[i];
+            n += 1;
+        }
+    }
+    return buf[0..n];
+}
+
+/// 宽松解析十进制数（可带正负号、小数点、千分位逗号）。
+/// 手写而不用 `std.fmt.parseFloat`：后者会把整套浮点解析拉进产物（体积红线）。
+pub fn parseF32(s: []const u8) ?f32 {
+    var i: usize = 0;
+    while (i < s.len and (s[i] == ' ' or s[i] == '\t')) i += 1;
+    var neg = false;
+    if (i < s.len and (s[i] == '-' or s[i] == '+')) {
+        neg = s[i] == '-';
+        i += 1;
+    }
+    var int_part: f64 = 0;
+    var seen = false;
+    while (i < s.len) : (i += 1) {
+        const c = s[i];
+        if (c >= '0' and c <= '9') {
+            int_part = int_part * 10 + @as(f64, @floatFromInt(c - '0'));
+            seen = true;
+        } else if (c == ',') {
+            continue;
+        } else break;
+    }
+    var frac: f64 = 0;
+    var scale: f64 = 1;
+    if (i < s.len and s[i] == '.') {
+        i += 1;
+        while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {
+            scale *= 10;
+            frac = frac * 10 + @as(f64, @floatFromInt(s[i] - '0'));
+            seen = true;
+        }
+    }
+    if (!seen) return null;
+    const v = int_part + frac / scale;
+    const signed: f64 = if (neg) -v else v;
+    if (signed > 3.4e38 or signed < -3.4e38) return null;
+    return @floatCast(signed);
+}
