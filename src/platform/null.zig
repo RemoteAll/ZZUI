@@ -49,10 +49,9 @@ pub const Backend = struct {
     pub fn drawTextLayer(_: *Backend, _: *core.Context, _: u8) void {}
 
     pub fn saveSurface(self: *Backend, path: []const u8) !void {
-        // 无窗口后端的 BMP 由调用方用 bmpfile 写；这里只保留统一签名。
-        _ = self;
-        _ = path;
-        return error.Unsupported;
+        // 无窗口后端也能存图（Linux/macOS 的 --once 验证就靠这条路径）
+        const bmpfile = @import("../bmpfile.zig");
+        try bmpfile.saveBmp(path, self.buf, self.w, self.h);
     }
 
     /// 无系统字体可用：按 0.55 em 估宽、1.35 em 估高（与 core 的默认测量一致）。

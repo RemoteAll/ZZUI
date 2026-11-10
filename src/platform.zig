@@ -1,16 +1,44 @@
 //! 平台后端选择。核心层（core/render/widgets）不依赖任何平台 API；
-//! 每加一个平台就在这里加一个联合成员，并实现同一组方法：
-//! `size / scale / pixels / poll / present / measure / deinit`。
+//! 每加一个平台就在这里加一个联合成员，并实现同一组方法。
 //!
-//! 里程碑 1：`win32`（实机窗口）+ `null`（无窗口，供 `--once` 出图与回归）。
-//! 多平台路线：Cocoa / X11 后端各占一个成员，核心层不变。
+//! **契约是编译期强制的**：下面的 `assertBackendContract` 会用 `@hasDecl` /
+//! `@hasField` 检查每个后端是否实现了完整方法集 —— 新增后端漏一个方法，
+//! 构建直接失败，不会拖到运行期才发现「某个平台少了 drawTextLayer」。
+//!
+//! 已实现：`win32`（实机窗口）+ `null`（无窗口，全平台可用，供 `--once` 出图与回归）。
+//! 待实现：`x11`（Linux）、`cocoa`（macOS）—— 各占一个联合成员，核心层不变。
 const std = @import("std");
+const builtin = @import("builtin");
 const t = @import("types.zig");
 const core = @import("core.zig");
 const win32_backend = @import("platform/win32.zig");
 const null_backend = @import("platform/null.zig");
 
 pub const Platform = enum { win32, null_backend };
+
+/// 后端必须提供的方法（`input` 是字段，单独检查）。
+const backend_methods = [_][]const u8{
+    "deinit",       "poll",  "size",         "scale",
+    "now",          "pixels", "present",     "drawTextLayer",
+    "saveSurface",  "measure",
+};
+
+fn assertBackendContract(comptime T: type) void {
+    for (backend_methods) |m| {
+        if (!@hasDecl(T, m)) {
+            @compileError("平台后端 " ++ @typeName(T) ++ " 缺少方法 `" ++ m ++
+                "`：新增后端必须实现 platform.zig 里 backend_methods 列出的全部方法");
+        }
+    }
+    if (!@hasField(T, "input")) {
+        @compileError("平台后端 " ++ @typeName(T) ++ " 缺少字段 `input: t.Input`");
+    }
+}
+
+comptime {
+    assertBackendContract(win32_backend.Backend);
+    assertBackendContract(null_backend.Backend);
+}
 
 pub const Backend = union(enum) {
     win32: win32_backend.Backend,

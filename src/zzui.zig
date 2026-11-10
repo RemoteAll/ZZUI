@@ -48,7 +48,13 @@ pub const App = struct {
     };
 
     pub fn init(desc: Desc) !App {
-        return .{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height, desc.show) };
+        // 按目标平台选后端：目前只有 Win32 实现了真窗口；
+        // 其他平台返回**明确的运行时错误**（而不是编译不过或静默出空窗）。
+        // 新增后端时在这里加一个分支，并在 `platform.zig` 的联合体里加成员。
+        if (comptime @import("builtin").os.tag == .windows) {
+            return .{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height, desc.show) };
+        }
+        return error.PlatformNotImplemented;
     }
 
     pub fn initHeadless(width: u32, height: u32) !App {

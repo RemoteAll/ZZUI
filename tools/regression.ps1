@@ -61,6 +61,18 @@ if (Test-Path 'build.zig') {
     } else {
         Check "zig-test" $false ("exit=" + $r.Code + " " + $r.Output)
     }
+
+    # 交叉编译检查：库必须能在 Linux x64/aarch64、macOS、Windows 四个目标上编译
+    # （多平台硬约束的护栏；Windows 专用的 Win32 调用不能泄进平台无关层）
+    Write-Host "== 1.2b zig build check (cross-compile the library) =="
+    $r = Invoke-Cmd 'zig' @('build','check') $root
+    if ($r.Code -eq 0) {
+        Check "zig-check-cross" $true "exit=0 (linux-x64 / linux-aarch64 / macos-x64 / windows-x64)"
+    } elseif ($r.Output -match 'no step named .check.|unknown step') {
+        Skip "zig-check-cross" "build.zig has no 'check' step"
+    } else {
+        Check "zig-check-cross" $false ("exit=" + $r.Code + " " + $r.Output)
+    }
 } else {
     Skip "zig-build" "build.zig not found (project has no source yet)"
     Skip "zig-test" "build.zig not found"
