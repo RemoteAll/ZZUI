@@ -65,7 +65,7 @@ pub const MAX_COMMANDS = 512;
 pub const MAX_DEPTH = 12;
 pub const MAX_HITS = 128;
 pub const MAX_FOCUS = 64;
-pub const MAX_OVERLAYS = 64;
+pub const MAX_OVERLAYS = 192;
 pub const MAX_TEXT_POOL = 8192;
 pub const MAX_SCROLLS = 16;
 pub const MAX_TIPS = 16;
@@ -111,6 +111,9 @@ pub const ContainerOpts = struct {
     gap: f32 = 0,
     fill: ?t.Color = null,
     radius: f32 = 0,
+    /// 容器描边（卡片/分组框/分段控件底座都要用）。
+    border: ?t.Color = null,
+    border_width: f32 = 1,
 };
 
 pub const BoxOpts = struct {
@@ -349,6 +352,8 @@ pub const Context = struct {
             .rect = .{ .x = x, .y = y, .w = outer_w, .h = 0 },
             .radius = opts.radius,
             .fill = opts.fill orelse t.Color.transparent,
+            .border = opts.border orelse t.Color.transparent,
+            .border_width = if (opts.border != null) opts.border_width else 0,
         });
         self.stack[self.depth] = .{
             .node = node,

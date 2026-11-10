@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
     const specs = [_]struct { name: []const u8, arch: std.Target.Cpu.Arch }{
         .{ .name = "zzui-hello-x64", .arch = .x86_64 },
         .{ .name = "zzui-hello-x86", .arch = .x86 },
+        .{ .name = "zzui-gallery-x64", .arch = .x86_64 },
     };
 
     for (specs) |spec| {
@@ -19,10 +20,11 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        const is_gallery = std.mem.startsWith(u8, spec.name, "zzui-gallery");
         const exe = b.addExecutable(.{
             .name = spec.name,
             .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/hello.zig"),
+                .root_source_file = b.path(if (is_gallery) "examples/gallery.zig" else "examples/hello.zig"),
                 .target = target,
                 .optimize = optimize,
                 .strip = true,

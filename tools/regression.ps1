@@ -87,7 +87,7 @@ function Invoke-GuiExe($exe, [string[]]$argv, [string]$workdir) {
 
 Write-Host "== 1.3 size gate (CUI baseline 303104 B, tighten only) =="
 $sizeLimit = 303104
-$exes = @('zig-out/bin/zzui-hello-x64.exe','zig-out/bin/zzui-hello-x86.exe')
+$exes = @('zig-out/bin/zzui-hello-x64.exe','zig-out/bin/zzui-hello-x86.exe','zig-out/bin/zzui-gallery-x64.exe')
 foreach ($e in $exes) {
     if (Test-Path $e) {
         $len = (Get-Item $e).Length
@@ -157,6 +157,43 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     }
 } else {
     Skip "shot" "zzui-hello-x64.exe not found"
+}
+
+Write-Host "== 1.6 gallery (extras + controls) =="
+if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
+    $tmp3 = Join-Path $env:TEMP 'zzui-regression'
+    if (-not (Test-Path $tmp3)) { New-Item -ItemType Directory -Path $tmp3 -Force | Out-Null }
+    Remove-Item (Join-Path $tmp3 'zzui-gallery.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--once') $tmp3
+    Check "gallery:once-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $gb = Join-Path $tmp3 'zzui-gallery.bmp'
+    if (Test-Path $gb) {
+        $expect = 54 + 720 * 1600 * 4
+        Check "gallery:once-size" ((Get-Item $gb).Length -eq $expect) ("bytes=" + (Get-Item $gb).Length + " expect=" + $expect)
+    } else {
+        Check "gallery:once-size" $false "bmp not written"
+    }
+    Remove-Item (Join-Path $tmp3 'zzui-gallery-shot.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--shot') $tmp3
+    Check "gallery:shot-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $gs = Join-Path $tmp3 'zzui-gallery-shot.bmp'
+    if (Test-Path $gs) {
+        $g = [IO.File]::ReadAllBytes($gs)
+        $gw = [BitConverter]::ToInt32($g, 18)
+        $gh = [BitConverter]::ToInt32($g, 22)
+        $dark = 0
+        for ($y = 20; $y -lt [Math]::Min(900, $gh); $y++) {
+            for ($x = 20; $x -lt [Math]::Min(460, $gw); $x++) {
+                $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                if ($g[$off] -lt 100 -and $g[$off+1] -lt 100 -and $g[$off+2] -lt 100) { $dark++ }
+            }
+        }
+        Check "gallery:shot-text" ($dark -gt 2000) ("dark=" + $dark + " size=" + $gw + "x" + $gh)
+    } else {
+        Check "gallery:shot-text" $false "shot bmp not written"
+    }
+} else {
+    Skip "gallery" "zzui-gallery-x64.exe not found"
 }
 
 Write-Host "== 2. continuity =="

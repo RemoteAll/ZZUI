@@ -2,6 +2,8 @@
 const std = @import("std");
 const core = @import("core.zig");
 const widgets = @import("widgets.zig");
+const extras = @import("extras.zig");
+const controls = @import("controls.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
 
@@ -324,4 +326,158 @@ test "tooltip appears after the hover delay and adds no hit" {
     widgets.tooltip(&ui, "tip", anchor, "Hello", false, 0.35);
     ui.paint();
     try std.testing.expectEqual(@as(u8, 0), ui.max_layer);
+}
+
+// ---------------------------------------------------------------- 控件族（extras / controls）
+
+test "tabs switches to the clicked tab" {
+    var ui = core.Context{};
+    var active: usize = 0;
+    const labels = [_][]const u8{ "A", "B", "C" };
+
+    ui.begin(400, 200);
+    controls.tabs(&ui, "t", labels[0..], &active);
+    ui.paint();
+    const id = core.Context.idOf("t") ^ (0x7AB5 + 1);
+    const r = ui.lastRect(id) orelse return error.NoHit;
+
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    controls.tabs(&ui, "t", labels[0..], &active);
+    ui.paint();
+
+    try std.testing.expectEqual(@as(usize, 1), active);
+}
+
+test "rating picks the star under the cursor" {
+    var ui = core.Context{};
+    var stars: u8 = 0;
+
+    ui.begin(400, 200);
+    controls.rating(&ui, "r", &stars, 5);
+    ui.paint();
+    const id = core.Context.idOf("r") ^ (0x5A7 + 4);
+    const r = ui.lastRect(id) orelse return error.NoHit;
+
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    controls.rating(&ui, "r", &stars, 5);
+    ui.paint();
+
+    try std.testing.expectEqual(@as(u8, 5), stars);
+}
+
+test "stepper increments and clamps" {
+    var ui = core.Context{};
+    var value: i32 = 98;
+    const inc_id = core.Context.idOf("+") ^ 0x9E3779B97F4A7C15 ^ (core.Context.idOf("s") ^ 0xE12);
+    const dec_id = core.Context.idOf("-") ^ 0x9E3779B97F4A7C15 ^ (core.Context.idOf("s") ^ 0xE11);
+
+    ui.begin(400, 200);
+    controls.stepper(&ui, "s", &value, 0, 99);
+    ui.paint();
+    const r = ui.lastRect(inc_id) orelse return error.NoHit;
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    controls.stepper(&ui, "s", &value, 0, 99);
+    ui.paint();
+    try std.testing.expectEqual(@as(i32, 99), value);
+
+    // 已到上限：再点一次不变
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    controls.stepper(&ui, "s", &value, 0, 99);
+    ui.paint();
+    try std.testing.expectEqual(@as(i32, 99), value);
+    _ = dec_id;
+}
+
+test "chip toggles its own state" {
+    var ui = core.Context{};
+    var on = false;
+    const id = core.Context.idOf("alpha") ^ 0xC41F;
+
+    ui.begin(400, 200);
+    _ = controls.chip(&ui, "alpha", &on);
+    ui.paint();
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    _ = controls.chip(&ui, "alpha", &on);
+    ui.paint();
+
+    try std.testing.expect(on);
+}
+
+test "breadcrumb reports the clicked ancestor" {
+    var ui = core.Context{};
+    const items = [_][]const u8{ "Home", "Projects", "ZZUI" };
+    var clicked: ?usize = null;
+
+    ui.begin(400, 200);
+    _ = controls.breadcrumb(&ui, items[0..], 2);
+    ui.paint();
+    const id = core.Context.idOf("Home") ^ 0xB4EA;
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    const mx = r.x + r.w / 2;
+    const my = r.y + r.h / 2;
+
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    ui.begin(400, 200);
+    clicked = controls.breadcrumb(&ui, items[0..], 2);
+    ui.paint();
+
+    try std.testing.expectEqual(@as(?usize, 0), clicked);
+}
+
+test "range slider drags the low thumb" {
+    var ui = core.Context{};
+    var lo: f32 = 20;
+    var hi: f32 = 70;
+
+    ui.begin(300, 100);
+    controls.rangeSlider(&ui, "rg", &lo, &hi, 0, 100);
+    ui.paint();
+
+    // 轨道从 x=0 起、宽 300：20% 处按下
+    ui.input = .{ .mouse = .{ .x = 60, .y = 13 }, .down = true, .pressed = true };
+    ui.begin(300, 100);
+    controls.rangeSlider(&ui, "rg", &lo, &hi, 0, 100);
+    ui.paint();
+
+    ui.input = .{ .mouse = .{ .x = 150, .y = 13 }, .down = true };
+    ui.begin(300, 100);
+    controls.rangeSlider(&ui, "rg", &lo, &hi, 0, 100);
+    ui.paint();
+
+    try std.testing.expectApproxEqAbs(@as(f32, 50), lo, 3);
+    try std.testing.expectApproxEqAbs(@as(f32, 70), hi, 0.01);
+}
+
+test "progress fills the bar proportionally" {
+    var ui = core.Context{};
+    ui.begin(300, 100);
+    extras.progress(&ui, 0.5, .{ .height = 8 });
+    ui.paint();
+
+    try std.testing.expectEqual(@as(usize, 2), ui.cmd_count);
+    const fill = ui.cmds[1].rect.rect;
+    try std.testing.expectApproxEqAbs(@as(f32, 150), fill.w, 1);
+}
+
+test "badge tone controls foreground color" {
+    const ok = extras.toneColors(.success);
+    const bad = extras.toneColors(.danger);
+    try std.testing.expect(ok.fg.g > ok.fg.r);
+    try std.testing.expect(bad.fg.r > bad.fg.g);
 }

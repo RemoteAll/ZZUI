@@ -13,6 +13,14 @@ pub const accent_text = t.Color.hex(0xFFFFFF, 255);
 pub const track = t.Color.hex(0xD9DEE5, 255);
 pub const hover_overlay = t.Color.hex(0x000000, 16);
 
+// 语义色（用于 badge / 进度 / 时间线 / 指标涨跌等，CUI 的 DANGER/SUCCESS 对位）。
+pub const success = t.Color.hex(0x15803D, 255);
+pub const success_bg = t.Color.hex(0xE8F6EC, 255);
+pub const warn = t.Color.hex(0xB45309, 255);
+pub const warn_bg = t.Color.hex(0xFDF3E0, 255);
+pub const danger = t.Color.hex(0xB91C1C, 255);
+pub const danger_bg = t.Color.hex(0xFDECEC, 255);
+
 pub const radius_control: f32 = 8;
 pub const radius_pill: f32 = 999;
 

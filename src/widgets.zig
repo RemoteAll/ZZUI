@@ -6,7 +6,7 @@ const theme = @import("theme.zig");
 const t = @import("types.zig");
 
 /// 1px 圆角边框：外圈画边框色、内圈画填充色（比 4 条矩形拼边框更圆顺）。
-fn ringBox(ui: *core.Context, rect: t.Rect, radius: f32, fill: t.Color, border: t.Color) void {
+pub fn ringBox(ui: *core.Context, rect: t.Rect, radius: f32, fill: t.Color, border: t.Color) void {
     if (rect.w <= 0 or rect.h <= 0) return;
     ui.addBox(rect, .{ .fill = border, .radius = radius });
     const r2 = if (radius > 1) radius - 1 else 0;
@@ -43,6 +43,8 @@ pub fn separator(ui: *core.Context) void {
 pub const ButtonOpts = struct {
     variant: t.Variant = .secondary,
     width: f32 = 0,
+    /// 同名按钮重复出现时（分页/步进器等）用它区分交互 id。
+    id_salt: u64 = 0,
 };
 
 pub fn button(ui: *core.Context, label: []const u8, opts: ButtonOpts) bool {
@@ -66,7 +68,8 @@ pub fn buttonEx(ui: *core.Context, label: []const u8, opts: ButtonOpts) ButtonRe
 /// 在指定矩形里画按钮（浮层等绝对定位场景）。
 pub fn buttonRect(ui: *core.Context, rect: t.Rect, label: []const u8, opts: ButtonOpts) bool {
     const m = ui.measureText(label, theme.font_body);
-    const it = ui.interactEx(core.Context.idOf(label) ^ 0x9E3779B97F4A7C15, rect, true);
+    const id = core.Context.idOf(label) ^ 0x9E3779B97F4A7C15 ^ opts.id_salt;
+    const it = ui.interactEx(id, rect, true);
 
     switch (opts.variant) {
         .primary => {
