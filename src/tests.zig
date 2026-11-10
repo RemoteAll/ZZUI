@@ -95,3 +95,82 @@ test "frame string pool keeps generated text valid" {
     // 池里应出现完整的 "Clicked 42 times"
     try std.testing.expectEqualStrings("Clicked 42 times", ui.nodes[0].text);
 }
+
+test "text wraps within the column width" {
+    var ui = core.Context{};
+    ui.begin(300, 400);
+    var col = ui.column(.{ .pad = 10, .gap = 0 });
+    const r = ui.textRun("The quick brown fox jumps over the lazy dog again and again", 14, theme.text);
+    col.end();
+    ui.paint();
+    try std.testing.expect(r.h > 14);
+    var i: usize = 0;
+    var lines: usize = 0;
+    while (i < ui.node_count) : (i += 1) {
+        if (ui.nodes[i].kind == .text) {
+            lines += 1;
+            try std.testing.expect(ui.measureText(ui.nodes[i].text, 14).w <= 280.01);
+        }
+    }
+    try std.testing.expect(lines >= 2);
+}
+
+test "input edits text and moves the caret" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    var len: usize = 0;
+    var caret: usize = 0;
+
+    ui.begin(300, 200);
+    var c1 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "name", &buf, &len, &caret, .{});
+    c1.end();
+    ui.paint();
+
+    ui.input = .{ .mouse = .{ .x = 20, .y = 10 }, .click = .{ .x = 20, .y = 10 } };
+    ui.begin(300, 200);
+    var c2 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "name", &buf, &len, &caret, .{});
+    c2.end();
+    ui.paint();
+
+    ui.input = .{};
+    ui.input.addCharBytes("ab");
+    ui.begin(300, 200);
+    var c3 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "name", &buf, &len, &caret, .{});
+    c3.end();
+    ui.paint();
+    try std.testing.expectEqualStrings("ab", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 2), caret);
+
+    ui.input = .{};
+    ui.input.addKey(.backspace);
+    ui.begin(300, 200);
+    var c4 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "name", &buf, &len, &caret, .{});
+    c4.end();
+    ui.paint();
+    try std.testing.expectEqualStrings("a", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 1), caret);
+
+    ui.input = .{};
+    ui.input.addKey(.left);
+    ui.begin(300, 200);
+    var c5 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "name", &buf, &len, &caret, .{});
+    c5.end();
+    ui.paint();
+    try std.testing.expectEqual(@as(usize, 0), caret);
+
+    ui.input = .{};
+    ui.input.addKey(.end);
+    ui.input.addCharBytes("你");
+    ui.begin(300, 200);
+    var c6 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "name", &buf, &len, &caret, .{});
+    c6.end();
+    ui.paint();
+    try std.testing.expectEqualStrings("a你", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 4), caret);
+}

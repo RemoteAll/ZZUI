@@ -46,13 +46,17 @@ pub const Variant = enum { primary, secondary, ghost };
 /// 与 Win32 虚拟键码对齐；其它平台后端映射到同一组值。
 pub const Key = enum(u8) {
     unknown = 0,
+    backspace = 8,
     tab = 9,
     enter = 13,
-    space = 32,
+    end = 35,
+    home = 36,
     left = 37,
     up = 38,
     right = 39,
     down = 40,
+    delete = 46,
+    space = 32,
 };
 
 /// 每帧输入快照。`click` 只在「按下并在同一控件内抬起」的那一帧出现在这里。
@@ -65,12 +69,25 @@ pub const Input = struct {
     quit: bool = false,
     keys: [8]Key = @splat(.unknown),
     key_count: u8 = 0,
+    /// 本帧输入的 UTF-8 字节（来自 WM_CHAR 或测试注入）。
+    chars: [64]u8 = @splat(0),
+    chars_len: u8 = 0,
 
     pub fn addKey(self: *Input, k: Key) void {
         if (self.key_count < self.keys.len) {
             self.keys[self.key_count] = k;
             self.key_count += 1;
         }
+    }
+
+    pub fn addCharBytes(self: *Input, bytes: []const u8) void {
+        if (self.chars_len + bytes.len > self.chars.len) return;
+        @memcpy(self.chars[self.chars_len .. self.chars_len + bytes.len], bytes);
+        self.chars_len += @intCast(bytes.len);
+    }
+
+    pub fn charsSlice(self: *const Input) []const u8 {
+        return self.chars[0..self.chars_len];
     }
 
     pub fn keyPressed(self: Input, k: Key) bool {

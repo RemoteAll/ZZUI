@@ -9,6 +9,9 @@ const State = struct {
     auto_save: bool = true,
     mode: u32 = 1,
     volume: f32 = 0.6,
+    name: [64]u8 = @splat(0),
+    name_len: usize = 0,
+    name_caret: usize = 0,
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -40,6 +43,11 @@ fn buildControls(ui: *zzui.core.Context, st: *State) void {
     }
 
     zzui.widgets.slider(ui, "Volume", &st.volume, 0, 1);
+
+    zzui.widgets.secondary(ui, "Text wraps to the content width, so a long sentence stays inside the window " ++
+        "instead of running off the right edge like it used to.");
+
+    _ = zzui.widgets.input(ui, "name", &st.name, &st.name_len, &st.name_caret, .{ .placeholder = "Type your name" });
 }
 
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
@@ -48,7 +56,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     if (hasFlag(cmdline, "--once")) return runOnce();
 
     var st = State{};
-    var app = zzui.App.init(.{ .title = "Hello, ZZUI", .width = 420, .height = 460 }) catch return 1;
+    var app = zzui.App.init(.{ .title = "Hello, ZZUI", .width = 420, .height = 580 }) catch return 1;
     defer app.deinit();
     while (app.next()) {
         build(&app.ui, &st);
@@ -59,18 +67,18 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
 }
 
 fn runOnce() i32 {
-    var app = zzui.App.initHeadless(420, 460) catch return 2;
+    var app = zzui.App.initHeadless(420, 580) catch return 2;
     defer app.deinit();
     if (!app.next()) return 3;
     var st = State{};
     buildOnce(&app.ui, &st);
     app.end();
-    zzui.bmpfile.saveBmp("zzui-hello.bmp", app.backend.pixels(), 420, 460) catch return 4;
+    zzui.bmpfile.saveBmp("zzui-hello.bmp", app.backend.pixels(), 420, 580) catch return 4;
     return 0;
 }
 
 fn runShot() i32 {
-    var app = zzui.App.init(.{ .title = "ZZUI shot", .width = 440, .height = 500, .show = false }) catch return 5;
+    var app = zzui.App.init(.{ .title = "ZZUI shot", .width = 460, .height = 640, .show = false }) catch return 5;
     defer app.deinit();
     if (!app.next()) return 6;
     var st = State{};

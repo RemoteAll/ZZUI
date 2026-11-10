@@ -283,13 +283,30 @@ pub const Context = struct {
         _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color });
     }
 
-    /// 文本占位 + 文本节点。column 里撑满内容宽，row 里按测量宽度。
+    /// 文本占位 + 文本节点。column 里按内容宽自动换行，row 里按测量宽度单行。
     pub fn textRun(self: *Context, s: []const u8, size: f32, color: t.Color) t.Rect {
         const owned = self.frameStr(s);
         const m = self.measureText(owned, size);
-        const h = if (m.h > 0) m.h else size * 1.35;
-        const rect = self.reserve(m.w, h, true);
-        self.addText(rect, owned, size, color);
+        const line_h = if (m.h > 0) m.h else size * 1.35;
+        const frame = &self.stack[self.depth - 1];
+        if (frame.dir == .row or frame.width <= 0) {
+            const rect = self.reserve(m.w, line_h, true);
+            self.addText(rect, owned, size, color);
+            return rect;
+        }
+        var lines: [MAX_LINES][]const u8 = undefined;
+        const n = wrapText(self, owned, size, frame.width, &lines);
+        const total_h = line_h * @as(f32, @floatFromInt(n));
+        const rect = self.reserve(0, total_h, true);
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            self.addText(.{
+                .x = rect.x,
+                .y = rect.y + line_h * @as(f32, @floatFromInt(i)),
+                .w = frame.width,
+                .h = line_h,
+            }, lines[i], size, color);
+        }
         return rect;
     }
 
@@ -450,6 +467,73 @@ fn advance(f: *Frame, main: f32, cross: f32) void {
 fn defaultMeasure(_: ?*anyopaque, s: []const u8, size: f32) t.Size {
     const n: f32 = @floatFromInt(s.len);
     return .{ .w = n * size * 0.55, .h = size * 1.35 };
+}
+
+pub const MAX_LINES = 32;
+
+fn utf8Len(b: u8) usize {
+    return std.unicode.utf8ByteSequenceLength(b) catch 1;
+}
+
+fn decodeCp(s: []const u8) u21 {
+    return std.unicode.utf8Decode(s) catch 0;
+}
+
+fn breakable(cp: u21, next: u21) bool {
+    if (cp == ' ' or cp == '-' or cp == '/') return true;
+    if (cp >= 0x2E80) return true; // CJK 与全角字符后
+    if (next >= 0x2E80) return true; // CJK 前
+    return false;
+}
+
+/// 贪心换行：优先在空格 / 连字符 / CJK 边界断行；单个超长词按字符硬断。
+pub fn wrapText(ui: *Context, s: []const u8, size: f32, max_w: f32, out: *[MAX_LINES][]const u8) usize {
+    if (s.len == 0) {
+        out[0] = s;
+        return 1;
+    }
+    if (max_w <= 0 or ui.measureText(s, size).w <= max_w) {
+        out[0] = s;
+        return 1;
+    }
+    var n: usize = 0;
+    var start: usize = 0;
+    while (start < s.len and n < out.len) {
+        var i = start;
+        var fit_end = start;
+        var last_break = start;
+        while (i < s.len) {
+            const clen = utf8Len(s[i]);
+            const cand_end = i + clen;
+            if (cand_end > s.len) break;
+            if (ui.measureText(s[start..cand_end], size).w > max_w) break;
+            fit_end = cand_end;
+            const cp = decodeCp(s[i..cand_end]);
+            var next: u21 = 0;
+            if (cand_end < s.len) {
+                const nlen = utf8Len(s[cand_end]);
+                if (cand_end + nlen <= s.len) next = decodeCp(s[cand_end .. cand_end + nlen]);
+            }
+            if (breakable(cp, next)) last_break = cand_end;
+            i = cand_end;
+        }
+        var end = fit_end;
+        if (end == start) {
+            end = start + utf8Len(s[start]);
+            if (end > s.len) end = s.len;
+        } else if (last_break > start and last_break < fit_end and fit_end < s.len) {
+            end = last_break;
+        }
+        out[n] = s[start..end];
+        n += 1;
+        start = end;
+        while (start < s.len and s[start] == ' ') start += 1;
+    }
+    if (n == 0) {
+        out[0] = s;
+        return 1;
+    }
+    return n;
 }
 
 // ---------------------------------------------------------------- 单元测试

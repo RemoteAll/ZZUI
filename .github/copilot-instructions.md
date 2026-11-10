@@ -7,8 +7,8 @@
 ## 项目现状（2026-11-10 里程碑 1 已落地）
 
 - **定位**：ZigLang 的 UI 界面框架；**CUI（`G:\Code\C\CUI`）为移植蓝本，必须多平台**（用户口径）。
-- 已实现：平台层抽象（`src/platform.zig` + `platform/win32.zig` + `platform/null.zig`）、立即模式核心（节点 / 栈布局 / 绘制指令 / 上一帧命中判定 / Tab 焦点 / 鼠标捕获 / 帧内文本池）、软件光栅（BGRA、圆角、线段）、**9 个控件**（heading / text / secondary / separator / button / switch / checkbox / radio / slider）、`examples/hello.zig` 与 `--once` / `--shot` 两种无人工出图。
-- 产物（实测）：`zzui-hello-x64.exe` **130,560 B（127.5 KB）**、x86 **132,608 B（129.5 KB）**；体积门槛 303,104 B（CUI hello 基线）写在 `tools/regression.ps1`，只能收紧。
+- 已实现：平台层抽象（`src/platform.zig` + `platform/win32.zig` + `platform/null.zig`）、立即模式核心（节点 / 栈布局 / 绘制指令 / 上一帧命中判定 / Tab 焦点 / 鼠标捕获 / 帧内文本池 / **文本换行**）、软件光栅（BGRA、圆角、线段）、**10 个控件**（heading / text / secondary / separator / button / switch / checkbox / radio / slider / **input**）、`examples/hello.zig` 与 `--once` / `--shot` 两种无人工出图。
+- 产物（实测）：`zzui-hello-x64.exe` **134,656 B（131.5 KB）**、x86 **135,680 B（132.5 KB）**；体积门槛 303,104 B（CUI hello 基线）写在 `tools/regression.ps1`，只能收紧。
 - 远端：`https://github.com/RemoteAll/ZZUI.git`（remote 名 `origin`，分支 `main`）。
 - 待办：Cocoa / X11 后端、帧末统一布局、状态回收与动画、深色主题；文本当前由平台层用系统字体画（核心不带 TTF 光栅器）。
 

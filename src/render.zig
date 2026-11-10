@@ -71,7 +71,8 @@ fn fillRoundRect(
     }
 }
 
-fn insideRound(x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) bool {    if (r <= 0) return true;
+fn insideRound(x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) bool {
+    if (r <= 0) return true;
     var cx = x;
     var cy = y;
     if (x < x0 + r) {

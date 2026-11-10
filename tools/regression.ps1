@@ -106,15 +106,21 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     Check "render:exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
     $bmp = Join-Path $tmp 'zzui-hello.bmp'
     if (Test-Path $bmp) {
-        $expect = 54 + 420 * 460 * 4
+        $expect = 54 + 420 * 580 * 4
         Check "render:bmp-size" ((Get-Item $bmp).Length -eq $expect) ("bytes=" + (Get-Item $bmp).Length + " expect=" + $expect)
         $b = [IO.File]::ReadAllBytes($bmp)
-        $offBg = 54 + (460 - 1 - 0) * 420 * 4 + 0
-        $offBtn = 54 + (460 - 1 - 170) * 420 * 4 + 100 * 4
+        $offBg = 54 + (580 - 1 - 0) * 420 * 4 + 0
         $bgOk = ($b[$offBg] -eq 255 -and $b[$offBg+1] -eq 255 -and $b[$offBg+2] -eq 255)
-        $btnOk = ($b[$offBtn] -eq 0xEB -and $b[$offBtn+1] -eq 0x63 -and $b[$offBtn+2] -eq 0x25)
+        # 按钮区域随文本换行高度会变，改为在首屏上半部扫强调色像素（BGR: EB 63 25）
+        $found = $false
+        for ($y = 80; $y -lt 320 -and -not $found; $y++) {
+            for ($x = 0; $x -lt 260; $x++) {
+                $off = 54 + (580 - 1 - $y) * 420 * 4 + $x * 4
+                if ($b[$off] -eq 0xEB -and $b[$off+1] -eq 0x63 -and $b[$off+2] -eq 0x25) { $found = $true; break }
+            }
+        }
         Check "render:bg" $bgOk ("pixel(0,0)=" + $b[$offBg+2] + "," + $b[$offBg+1] + "," + $b[$offBg])
-        Check "render:button-accent" $btnOk ("pixel(100,170)=" + $b[$offBtn+2] + "," + $b[$offBtn+1] + "," + $b[$offBtn])
+        Check "render:accent-region" $found "scanned y=80..320 x=0..260"
     } else {
         Check "render:bmp" $false "bmp not written"
     }

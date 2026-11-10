@@ -1,5 +1,6 @@
 //! 控件：立即模式函数。状态全部由调用方变量保存（与 CUI 一致）。
 //! 交互一律对上一帧矩形判定（`Context.interactEx`），所以点击落在用户看到的位置。
+const std = @import("std");
 const core = @import("core.zig");
 const theme = @import("theme.zig");
 const t = @import("types.zig");
@@ -209,4 +210,135 @@ pub fn slider(ui: *core.Context, label: []const u8, value: *f32, min: f32, max: 
         .fill = t.Color.hex(0xFFFFFF, 255),
         .radius = (d - 4) / 2,
     });
+}
+
+pub const InputOpts = struct {
+    placeholder: []const u8 = "",
+    /// 0 表示撑满内容宽。
+    width: f32 = 0,
+};
+
+fn utf8Len(b: u8) usize {
+    return std.unicode.utf8ByteSequenceLength(b) catch 1;
+}
+
+fn prevCharStart(s: []const u8, i: usize) usize {
+    var k = i;
+    while (k > 0) {
+        k -= 1;
+        if ((s[k] & 0xC0) != 0x80) return k;
+    }
+    return 0;
+}
+
+fn nextCharEnd(s: []const u8, i: usize) usize {
+    const e = i + utf8Len(s[i]);
+    return if (e > s.len) s.len else e;
+}
+
+fn caretFromX(ui: *core.Context, s: []const u8, x0: f32, mx: f32) usize {
+    var i: usize = 0;
+    while (i < s.len) {
+        const e = nextCharEnd(s, i);
+        if (x0 + ui.measureText(s[0..e], theme.font_body).w > mx) return i;
+        i = e;
+    }
+    return s.len;
+}
+
+/// 单行文本输入：点击定位光标，方向键 / Home / End / 退格 / Delete 编辑。
+/// 返回 true 表示内容发生了变化。`buf` 由调用方提供（定长），`len` / `caret` 按字节计。
+pub fn input(
+    ui: *core.Context,
+    id: []const u8,
+    buf: []u8,
+    len: *usize,
+    caret: *usize,
+    opts: InputOpts,
+) bool {
+    const h: f32 = 36;
+    const rect = ui.reserve(opts.width, h, opts.width <= 0);
+    const it = ui.interactEx(core.Context.idOf(id) ^ 0x7FEB352D, rect, true);
+    var changed = false;
+    const pad_x: f32 = 10;
+
+    if (it.clicked) {
+        caret.* = caretFromX(ui, buf[0..len.*], rect.x + pad_x, ui.input.mouse.x);
+    }
+
+    if (it.focused) {
+        // 先处理导航/编辑键，再插入本帧字符：与真实的 KEYDOWN-先于-WM_CHAR 顺序一致。
+        if (ui.input.keyPressed(.backspace) and caret.* > 0 and caret.* <= len.*) {
+            const prev = prevCharStart(buf[0..len.*], caret.*);
+            const n = caret.* - prev;
+            var k = caret.*;
+            while (k < len.*) : (k += 1) buf[k - n] = buf[k];
+            len.* -= n;
+            caret.* = prev;
+            changed = true;
+        }
+        if (ui.input.keyPressed(.delete) and caret.* < len.*) {
+            const end = nextCharEnd(buf[0..len.*], caret.*);
+            const n = end - caret.*;
+            var k = end;
+            while (k < len.*) : (k += 1) buf[k - n] = buf[k];
+            len.* -= n;
+            changed = true;
+        }
+        if (ui.input.keyPressed(.left) and caret.* > 0) caret.* = prevCharStart(buf[0..len.*], caret.*);
+        if (ui.input.keyPressed(.right) and caret.* < len.*) caret.* = nextCharEnd(buf[0..len.*], caret.*);
+        if (ui.input.keyPressed(.home)) caret.* = 0;
+        if (ui.input.keyPressed(.end)) caret.* = len.*;
+
+        const chars = ui.input.charsSlice();
+        var ci: usize = 0;
+        while (ci < chars.len) {
+            const clen = utf8Len(chars[ci]);
+            if (ci + clen > chars.len) break;
+            if (len.* + clen <= buf.len and caret.* <= len.*) {
+                var k = len.*;
+                while (k > caret.*) : (k -= 1) buf[k + clen - 1] = buf[k - 1];
+                @memcpy(buf[caret.* .. caret.* + clen], chars[ci .. ci + clen]);
+                len.* += clen;
+                caret.* += clen;
+                changed = true;
+            }
+            ci += clen;
+        }
+    }
+
+    const border = if (it.focused) theme.accent else theme.border;
+    ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), border);
+
+    const content = buf[0..len.*];
+    const tx = rect.x + pad_x;
+    const m = ui.measureText(content, theme.font_body);
+    const ty = rect.y + (rect.h - m.h) / 2;
+    if (len.* == 0 and opts.placeholder.len > 0) {
+        const pm = ui.measureText(opts.placeholder, theme.font_body);
+        ui.addText(.{ .x = tx, .y = rect.y + (rect.h - pm.h) / 2, .w = pm.w, .h = pm.h }, opts.placeholder, theme.font_body, theme.secondary);
+    } else {
+        // 超宽时只显示尾部（保证光标可见的常见场景），从字符边界截断
+        const inner_w = rect.w - pad_x * 2;
+        var shown = content;
+        if (m.w > inner_w and content.len > 0) {
+            var start: usize = content.len;
+            while (start > 0) {
+                const prev = prevCharStart(content, start);
+                if (ui.measureText(content[prev..], theme.font_body).w > inner_w) break;
+                start = prev;
+            }
+            shown = content[start..];
+        }
+        const sm = ui.measureText(shown, theme.font_body);
+        ui.addText(.{ .x = tx, .y = ty, .w = sm.w, .h = sm.h }, shown, theme.font_body, theme.text);
+    }
+
+    if (it.focused) {
+        const cm = ui.measureText(buf[0..caret.*], theme.font_body);
+        var cx = tx + cm.w;
+        if (cx > rect.x + rect.w - pad_x) cx = rect.x + rect.w - pad_x;
+        ui.addOverlayLine(.{ .x = cx, .y = rect.y + 8 }, .{ .x = cx, .y = rect.y + rect.h - 8 }, 1.5, theme.text);
+    }
+    return changed;
 }

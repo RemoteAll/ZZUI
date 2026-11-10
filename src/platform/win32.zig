@@ -18,6 +18,9 @@ var g_pressed: bool = false;
 var g_pending_click: ?t.Point = null;
 var g_keys: [8]u8 = @splat(0);
 var g_key_count: usize = 0;
+var g_chars: [64]u8 = @splat(0);
+var g_chars_len: usize = 0;
+var g_high_surrogate: u16 = 0;
 var g_quit: bool = false;
 var g_need_resize: bool = false;
 
@@ -107,6 +110,11 @@ pub const Backend = struct {
             self.input.addKey(mapKey(g_keys[ki]));
         }
         g_key_count = 0;
+        self.input.chars_len = 0;
+        if (g_chars_len > 0) {
+            self.input.addCharBytes(g_chars[0..g_chars_len]);
+            g_chars_len = 0;
+        }
         if (g_pending_click) |p| {
             self.input.click = .{ .x = p.x / self.dpi, .y = p.y / self.dpi };
             g_pending_click = null;
@@ -142,7 +150,8 @@ pub const Backend = struct {
         return bmpfile.saveBmp(path, self.pixels(), self.px_w, self.px_h);
     }
 
-    pub fn present(self: *Backend, ui: *core.Context) void {        const dc = self.hdc_mem orelse return;
+    pub fn present(self: *Backend, ui: *core.Context) void {
+        const dc = self.hdc_mem orelse return;
         var i: usize = 0;
         while (i < ui.cmd_count) : (i += 1) {
             switch (ui.cmds[i]) {
@@ -156,7 +165,8 @@ pub const Backend = struct {
         _ = w.ReleaseDC(self.hwnd, wdc);
     }
 
-    pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {        const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
+    pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {
+        const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
         const font = self.fontFor(size_px) orelse return .{ .w = 0, .h = size_px * 1.35 };
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, s);
@@ -170,7 +180,8 @@ pub const Backend = struct {
         };
     }
 
-    fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {        const font = self.fontFor(c.size) orelse return;
+    fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {
+        const font = self.fontFor(c.size) orelse return;
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, c.text);
         const old = w.SelectObject(dc, font) orelse return;
@@ -183,7 +194,8 @@ pub const Backend = struct {
         _ = w.SelectObject(dc, old);
     }
 
-    fn fontFor(self: *Backend, size_px: f32) ?w.HFONT {        const weight: i32 = if (size_px >= 20) 600 else 400;
+    fn fontFor(self: *Backend, size_px: f32) ?w.HFONT {
+        const weight: i32 = if (size_px >= 20) 600 else 400;
         const key = size_px * 1000 + @as(f32, @floatFromInt(weight));
         for (&self.fonts) |*slot| {
             if (slot.font != null and slot.key == key) return slot.font;
@@ -239,15 +251,39 @@ fn mouseFrom(lp: w.LPARAM) t.Point {
 
 fn mapKey(vk: u8) t.Key {
     return switch (vk) {
+        8 => .backspace,
         9 => .tab,
         13 => .enter,
         32 => .space,
+        35 => .end,
+        36 => .home,
         37 => .left,
         38 => .up,
         39 => .right,
         40 => .down,
+        46 => .delete,
         else => .unknown,
     };
+}
+
+/// WM_CHAR 给的是 UTF-16 码元：控制字符交给 WM_KEYDOWN 处理；代理对合并后转 UTF-8。
+fn appendUtf16(u: u16) void {
+    if (u < 0x20) return;
+    if (u >= 0xD800 and u <= 0xDBFF) {
+        g_high_surrogate = u;
+        return;
+    }
+    var cp: u21 = u;
+    if (u >= 0xDC00 and u <= 0xDFFF) {
+        if (g_high_surrogate == 0) return;
+        cp = @intCast(0x10000 + (@as(u32, g_high_surrogate - 0xD800) << 10) + (u - 0xDC00));
+        g_high_surrogate = 0;
+    }
+    var buf4: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(cp, &buf4) catch return;
+    if (g_chars_len + n > g_chars.len) return;
+    @memcpy(g_chars[g_chars_len .. g_chars_len + n], buf4[0..n]);
+    g_chars_len += n;
 }
 
 fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi) w.LRESULT {
@@ -278,6 +314,10 @@ fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi)
                 g_keys[g_key_count] = @truncate(wp);
                 g_key_count += 1;
             }
+            return 0;
+        },
+        w.WM_CHAR => {
+            appendUtf16(@truncate(wp));
             return 0;
         },
         w.WM_CLOSE => {
