@@ -412,8 +412,29 @@ fn runColor(kind: u8) t.Color {
     };
 }
 
-fn expandTabs(line: []const u8, tab_size: u8, out: []u8) []const u8 {
-    const ts: usize = if (tab_size > 0) tab_size else 4;
+/// 单行语法着色（只读视图复用，如 `devviews.blame`）：把一行切成色块后逐段画出来。
+/// 与 `codeEditor` 同口径（逐行、块注释不跨行），`lang_name` 取 `Opts.lang` 的写法。
+pub fn highlightLine(ui: *core.Context, lang_name: []const u8, s: []const u8, x: f32, y: f32, size: f32, max_w: f32) void {
+    if (s.len == 0 or max_w <= 2) return;
+    var runs: [MAX_RUNS]Run = @splat(.{ .start = 0, .end = 0, .kind = 0 });
+    const n = tokenize(langOf(lang_name), s, &runs);
+    if (n == 0) return;
+    const limit = x + max_w;
+    var cx = x;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const r = runs[i];
+        const end = @min(r.end, s.len);
+        if (end <= r.start) continue;
+        const piece = s[r.start..end];
+        const w = ui.measureText(piece, size).w;
+        if (cx >= limit) break;
+        ui.addMonoText(.{ .x = cx, .y = y, .w = @min(w + 1, limit - cx), .h = size * 1.5 }, piece, size, runColor(r.kind));
+        cx += w;
+    }
+}
+
+fn expandTabs(line: []const u8, tab_size: u8, out: []u8) []const u8 {    const ts: usize = if (tab_size > 0) tab_size else 4;
     var n: usize = 0;
     for (line) |c| {
         if (n >= out.len) break;

@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -157,6 +157,13 @@ const State = struct {
     ai_voice: zzui.ai.VoiceState = .idle,
     ai_last: [80]u8 = @splat(0),
     ai_last_len: usize = 0,
+    /// 开发者视图（覆盖率树 / blame 的跨帧状态，直方图选区由我们持有）
+    dv_cov: zzui.devviews.CoverageState = .{},
+    dv_bl: zzui.devviews.BlameState = .{},
+    dv_sel0: f64 = 0,
+    dv_sel1: f64 = 0,
+    dv_last: [80]u8 = @splat(0),
+    dv_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -681,6 +688,43 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             st.ai_last_len = msg.len;
         }
         if (st.ai_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.ai_last[0..st.ai_last_len]));
+    } else if (st.page == 15) {
+        zzui.extras.muted(ui, "Dev views: uptime bars, stacked event histogram (drag to select), coverage tree (fold / sort / activate) and a blame gutter with an age heat bar");
+        const up = zzui.devviews.uptime(ui, "docs-up", dv_services[0..], .{ .last_day = .{ .year = 2026, .month = 11, .day = 11 } });
+        if (up.service >= 0) {
+            var nb: [48]u8 = undefined;
+            const msg = std.fmt.bufPrint(nb[0..], "uptime: {s} day {d}", .{ dv_services[@intCast(up.service)].name, up.day }) catch "uptime";
+            @memcpy(st.dv_last[0..msg.len], msg);
+            st.dv_last_len = msg.len;
+        }
+        zzui.widgets.separator(ui);
+        const hres = zzui.devviews.timeHistogram(ui, "docs-hist", 1_700_006_400, 3600, dv_buckets, dv_series[0..], &st.dv_sel0, &st.dv_sel1, .{ .height = 150 });
+        if (hres.selection_changed) {
+            var nb: [56]u8 = undefined;
+            const msg = std.fmt.bufPrint(nb[0..], "histogram: selected {d}..{d}", .{ @as(i64, @intFromFloat(st.dv_sel0)), @as(i64, @intFromFloat(st.dv_sel1)) }) catch "histogram";
+            @memcpy(st.dv_last[0..msg.len], msg);
+            st.dv_last_len = msg.len;
+        }
+        zzui.widgets.separator(ui);
+        const cov = zzui.devviews.coverage(ui, "docs-cov", dv_cov_files[0..], &st.dv_cov, .{ .height = 240 });
+        if (cov.activated >= 0) {
+            const n = @min(dv_cov_files[@intCast(cov.activated)].path.len, st.dv_last.len);
+            @memcpy(st.dv_last[0..n], dv_cov_files[@intCast(cov.activated)].path[0..n]);
+            st.dv_last_len = n;
+        }
+        zzui.widgets.separator(ui);
+        const bl = zzui.devviews.blame(ui, "docs-bl", dv_bl_lines[0..], dv_bl_map[0..], dv_bl_commits[0..], &st.dv_bl, .{
+            .height = 200,
+            .lang = "zig",
+            .now = 1_702_000_000,
+        });
+        if (bl.clicked >= 0) {
+            const msg = dv_bl_commits[@intCast(bl.clicked)].summary;
+            const n = @min(msg.len, st.dv_last.len);
+            @memcpy(st.dv_last[0..n], msg[0..n]);
+            st.dv_last_len = n;
+        }
+        if (st.dv_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.dv_last[0..st.dv_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -782,6 +826,64 @@ const ai_models = [_]zzui.ai.Model{
 
 const ai_attach = [_][]const u8{ "ai.zig", "cui_ai.c" };
 
+// ---- 开发者视图（第 16 页）的示例数据
+
+const dv_days_a = [_]f32{ 1.0, 1.0, 0.998, 0.991, 1.0, 0.972, 1.0, 1.0, 0.996, -1, 1.0, 0.93, 0.999, 1.0 };
+const dv_days_b = [_]f32{ 1.0, 0.999, 1.0, 1.0, 0.988, 1.0, 1.0, 0.999, 1.0, 1.0, 0.994, 1.0, 1.0, 1.0 };
+const dv_services = [_]zzui.devviews.UptimeService{
+    .{ .name = "api", .days = dv_days_a[0..] },
+    .{ .name = "worker", .days = dv_days_b[0..] },
+    .{ .name = "db-proxy", .days = dv_days_b[0..] },
+};
+
+const dv_buckets = 24;
+const dv_errors = [_]f32{ 0, 0, 1, 0, 0, 2, 1, 0, 0, 0, 3, 1, 0, 0, 0, 1, 2, 0, 0, 4, 1, 0, 0, 0 };
+const dv_warns = [_]f32{ 2, 1, 3, 2, 1, 4, 2, 1, 3, 2, 5, 3, 1, 2, 2, 3, 4, 2, 1, 6, 3, 2, 1, 2 };
+const dv_infos = [_]f32{ 9, 7, 11, 8, 6, 12, 9, 7, 10, 8, 14, 11, 7, 8, 9, 10, 12, 8, 6, 15, 10, 9, 7, 8 };
+const dv_series = [_]zzui.devviews.HistogramSeries{
+    .{ .name = "error", .counts = dv_errors[0..], .tone = .danger },
+    .{ .name = "warn", .counts = dv_warns[0..], .tone = .warn },
+    .{ .name = "info", .counts = dv_infos[0..], .tone = .info },
+};
+
+const dv_cov_files = [_]zzui.devviews.CoverageFile{
+    .{ .path = "src/core/layout.zig", .lines = 1240, .lines_hit = 1188, .branches = 210, .branches_hit = 186, .functions = 42, .functions_hit = 40 },
+    .{ .path = "src/core/render.zig", .lines = 860, .lines_hit = 731, .branches = 140, .branches_hit = 98, .functions = 28, .functions_hit = 25 },
+    .{ .path = "src/widgets.zig", .lines = 1540, .lines_hit = 1109, .branches = 320, .branches_hit = 190, .functions = 61, .functions_hit = 44 },
+    .{ .path = "src/devviews.zig", .lines = 720, .lines_hit = 302, .branches = 96, .branches_hit = 31, .functions = 19, .functions_hit = 9 },
+    .{ .path = "tests/core.zig", .lines = 480, .lines_hit = 474, .branches = 0, .branches_hit = 0, .functions = 12, .functions_hit = 12 },
+    .{ .path = "tests/render.zig", .lines = 365, .lines_hit = 350, .branches = 24, .branches_hit = 18, .functions = 9, .functions_hit = 9 },
+};
+
+const dv_bl_lines = [_][]const u8{
+    "//! 软件光栅：BGRA 上的圆角矩形 / 线段 / 裁剪。",
+    "const std = @import(\"std\");",
+    "const types = @import(\"types.zig\");",
+    "",
+    "pub fn fillRect(px: []u8, w: usize, h: usize, r: types.Rect, c: types.Color) void {",
+    "    const x0: usize = @intFromFloat(r.x);",
+    "    const y0: usize = @intFromFloat(r.y);",
+    "    var y = y0;",
+    "    while (y < h and y < y0 + @as(usize, @intFromFloat(r.h))) : (y += 1) {",
+    "        var x = x0;",
+    "        while (x < w and x < x0 + @as(usize, @intFromFloat(r.w))) : (x += 1) {",
+    "            const o = (y * w + x) * 4;",
+    "            px[o] = c.b;",
+    "            px[o + 1] = c.g;",
+    "            px[o + 2] = c.r;",
+    "            px[o + 3] = c.a;",
+    "        }",
+    "    }",
+    "}",
+};
+const dv_bl_map = [_]i32{ 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+const dv_bl_commits = [_]zzui.devviews.BlameCommit{
+    .{ .hash = "3f0a91c2e7", .author = "Ada", .summary = "光栅：圆角与线段", .time = 1_690_000_000 },
+    .{ .hash = "b71d4c88a0", .author = "Bo", .summary = "加上裁剪与覆盖层", .time = 1_700_200_000 },
+    .{ .hash = "e05c2fa319", .author = "Cy", .summary = "修 fillRect 的边界", .time = 1_701_800_000 },
+};
+
+
 /// 引导在页面内容之后跑（它要压在所有东西之上）。
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
     if (st.page != 3 or st.tour_step < 0) return;
@@ -797,6 +899,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-15")) return runShot(15);
     if (hasFlag(cmdline, "--shot-14")) return runShot(14);
     if (hasFlag(cmdline, "--shot-13")) return runShot(13);
     if (hasFlag(cmdline, "--shot-12")) return runShot(12);
