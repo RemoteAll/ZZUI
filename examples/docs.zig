@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev", "Panels" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -164,6 +164,14 @@ const State = struct {
     dv_sel1: f64 = 0,
     dv_last: [80]u8 = @splat(0),
     dv_last_len: usize = 0,
+    /// 开发面板（键值对内容、问题面板状态、流水线选中）
+    dt_kv: [4]zzui.devtools.KvPair = @splat(.{}),
+    dt_kv_n: usize = 0,
+    dt_kv_ready: bool = false,
+    dt_prb: zzui.devtools.ProblemsState = .{},
+    dt_pl_sel: i32 = -1,
+    dt_last: [80]u8 = @splat(0),
+    dt_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -725,6 +733,43 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             st.dv_last_len = n;
         }
         if (st.dv_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.dv_last[0..st.dv_last_len]));
+    } else if (st.page == 16) {
+        zzui.extras.muted(ui, "Dev panels: key-value editor (empty row adds a pair, * marks secrets), problems panel (severity chips, filter, fold by file) and a CI pipeline (click a job)");
+        if (!st.dt_kv_ready) {
+            st.dt_kv[0].setKey("Accept");
+            st.dt_kv[0].setValue("application/json");
+            st.dt_kv[1].setKey("Authorization");
+            st.dt_kv[1].setValue("Bearer 3f0a91c2");
+            st.dt_kv[1].secret = true;
+            st.dt_kv[2].setKey("X-Trace");
+            st.dt_kv[2].setValue("1");
+            st.dt_kv[2].enabled = false;
+            st.dt_kv_n = 3;
+            st.dt_kv_ready = true;
+        }
+        if (zzui.devtools.kvEditor(ui, "docs-kv", st.dt_kv[0..], &st.dt_kv_n, .{})) {
+            var nb: [40]u8 = undefined;
+            const msg = std.fmt.bufPrint(nb[0..], "kv changed: {d} pairs", .{st.dt_kv_n}) catch "kv";
+            @memcpy(st.dt_last[0..msg.len], msg);
+            st.dt_last_len = msg.len;
+        }
+        zzui.widgets.separator(ui);
+        const pr = zzui.devtools.problems(ui, "docs-prb", dt_diags[0..], &st.dt_prb, .{ .height = 230 });
+        if (pr.activated >= 0) {
+            const msg = dt_diags[@intCast(pr.activated)].message;
+            const n = @min(msg.len, st.dt_last.len);
+            @memcpy(st.dt_last[0..n], msg[0..n]);
+            st.dt_last_len = n;
+        }
+        zzui.widgets.separator(ui);
+        const pl = zzui.devtools.pipeline(ui, "docs-pl", dt_stages[0..], dt_jobs[0..], .{ .selected = &st.dt_pl_sel });
+        if (pl.clicked >= 0) {
+            const msg = dt_jobs[@intCast(pl.clicked)].name;
+            const n = @min(msg.len, st.dt_last.len);
+            @memcpy(st.dt_last[0..n], msg[0..n]);
+            st.dt_last_len = n;
+        }
+        if (st.dt_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.dt_last[0..st.dt_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -883,6 +928,29 @@ const dv_bl_commits = [_]zzui.devviews.BlameCommit{
     .{ .hash = "e05c2fa319", .author = "Cy", .summary = "修 fillRect 的边界", .time = 1_701_800_000 },
 };
 
+// ---- 开发面板（第 17 页）的示例数据
+
+const dt_diags = [_]zzui.devtools.Diagnostic{
+    .{ .severity = .err, .message = "expected ';' after statement", .file = "src/core/layout.zig", .line = 42, .column = 9, .source = "zig", .code = "E0001" },
+    .{ .severity = .warning, .message = "unused local constant 'tmp'", .file = "src/core/layout.zig", .line = 88, .source = "zig", .code = "W0042" },
+    .{ .severity = .err, .message = "undefined symbol 'fooBar'", .file = "src/widgets.zig", .line = 512, .column = 5, .source = "zig", .code = "E0002" },
+    .{ .severity = .info, .message = "file is not formatted", .file = "src/widgets.zig" },
+    .{ .severity = .warning, .message = "shadows declaration of 'count'", .file = "src/devviews.zig", .line = 233, .column = 9, .source = "zig", .code = "W0017" },
+    .{ .severity = .hint, .message = "consider a for loop instead", .file = "tests/core.zig", .line = 7, .column = 3 },
+    .{ .severity = .err, .message = "unreachable after return", .file = "tests/core.zig", .line = 64, .column = 11, .source = "zig", .code = "E0009" },
+};
+
+const dt_stages = [_][]const u8{ "build", "test", "package", "deploy" };
+const dt_jobs = [_]zzui.devtools.PipelineJob{
+    .{ .name = "linux-x64", .stage = 0, .status = .passed, .duration = 48 },
+    .{ .name = "windows-x64", .stage = 0, .status = .passed, .duration = 61 },
+    .{ .name = "unit", .stage = 1, .status = .passed, .duration = 124 },
+    .{ .name = "e2e", .stage = 1, .status = .running, .duration = 35 },
+    .{ .name = "musl-tar", .stage = 2, .status = .passed, .duration = 12 },
+    .{ .name = "win-zip", .stage = 2, .status = .pending },
+    .{ .name = "canary", .stage = 3, .status = .pending },
+    .{ .name = "smoke", .stage = 3, .status = .failed, .duration = 9, .allow_failure = true },
+};
 
 /// 引导在页面内容之后跑（它要压在所有东西之上）。
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
@@ -899,6 +967,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-16")) return runShot(16);
     if (hasFlag(cmdline, "--shot-15")) return runShot(15);
     if (hasFlag(cmdline, "--shot-14")) return runShot(14);
     if (hasFlag(cmdline, "--shot-13")) return runShot(13);

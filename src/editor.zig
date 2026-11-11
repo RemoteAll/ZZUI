@@ -434,7 +434,8 @@ pub fn highlightLine(ui: *core.Context, lang_name: []const u8, s: []const u8, x:
     }
 }
 
-fn expandTabs(line: []const u8, tab_size: u8, out: []u8) []const u8 {    const ts: usize = if (tab_size > 0) tab_size else 4;
+fn expandTabs(line: []const u8, tab_size: u8, out: []u8) []const u8 {
+    const ts: usize = if (tab_size > 0) tab_size else 4;
     var n: usize = 0;
     for (line) |c| {
         if (n >= out.len) break;

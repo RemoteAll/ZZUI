@@ -54,6 +54,7 @@ pub const nodes = @import("nodes.zig");
 pub const emoji = @import("emoji.zig");
 pub const ai = @import("ai.zig");
 pub const devviews = @import("devviews.zig");
+pub const devtools = @import("devtools.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");
