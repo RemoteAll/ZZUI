@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -103,6 +103,14 @@ const State = struct {
     gt_st: zzui.planning.GanttState = .{},
     plan_last: [64]u8 = @splat(0),
     plan_last_len: usize = 0,
+    /// 终端（输出缓冲由我们持有）
+    term_text: [4096]u8 = undefined,
+    term_lines: [128]zzui.terminal.Line = @splat(.{}),
+    term_buf: zzui.terminal.Buffer = .{},
+    term_st: zzui.terminal.State = .{},
+    term_ready: bool = false,
+    term_last: [64]u8 = @splat(0),
+    term_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -370,6 +378,40 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             }
         }
         if (st.plan_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.plan_last[0..st.plan_last_len]));
+    } else if (st.page == 9) {
+        zzui.extras.muted(ui, "Terminal: ANSI colours, tabs, \"\\r\" in-place redraw, block bars; type a command and press Enter (Ctrl+C / Ctrl+L work)");
+        if (!st.term_ready) {
+            zzui.terminal.init(&st.term_buf, &st.term_text, &st.term_lines);
+            zzui.terminal.write(&st.term_buf, "\x1b[2m$ \x1b[0mzig build -Doptimize=ReleaseSmall\n");
+            zzui.terminal.write(&st.term_buf, "   Compiling zzui v0.4.0\n");
+            zzui.terminal.write(&st.term_buf, "    Finished \x1b[32mrelease\x1b[0m in 2.34s\n");
+            zzui.terminal.write(&st.term_buf, "\nDownloading \x1b[36m[1/3]\x1b[0m \xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x91\xe2\x96\x91\xe2\x96\x91\xe2\x96\x91\xe2\x96\x91\xe2\x96\x91 40%");
+            zzui.terminal.write(&st.term_buf, "\rDownloading \x1b[36m[3/3]\x1b[0m \xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88 100%\n");
+            zzui.terminal.write(&st.term_buf, "\x1b[32m✓\x1b[0m 3 tests passed\n");
+            zzui.terminal.write(&st.term_buf, "\x1b[33mwarn\x1b[0m: unused variable `tmp`\n");
+            zzui.terminal.write(&st.term_buf, "\x1b[1;31merror\x1b[0m: expected `;` after statement\n");
+            zzui.terminal.write(&st.term_buf, "  \x1b[4msee build.zig:42\x1b[0m\n");
+            st.term_ready = true;
+        }
+        const r = zzui.terminal.terminal(ui, "docs-term", &st.term_buf, &st.term_st, .{ .height = 340 });
+        if (r.command) |cmd| {
+            const msg = std.fmt.bufPrint(st.term_last[0..], "ran: {s}", .{cmd}) catch "ran";
+            st.term_last_len = msg.len;
+            // 真实终端里这一步是把命令交给进程；演示里直接回一行输出
+            zzui.terminal.write(&st.term_buf, "> ");
+            zzui.terminal.write(&st.term_buf, cmd);
+            zzui.terminal.write(&st.term_buf, "\n");
+        }
+        if (r.interrupt) {
+            const msg = "interrupt (Ctrl+C)";
+            @memcpy(st.term_last[0..msg.len], msg);
+            st.term_last_len = msg.len;
+        }
+        if (r.copy) |sel| {
+            const msg = std.fmt.bufPrint(st.term_last[0..], "copy {d} bytes: {s}", .{ sel.len, sel }) catch "copy";
+            st.term_last_len = msg.len;
+        }
+        if (st.term_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.term_last[0..st.term_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -402,6 +444,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-9")) return runShot(9);
     if (hasFlag(cmdline, "--shot-8")) return runShot(8);
     if (hasFlag(cmdline, "--shot-7")) return runShot(7);
     if (hasFlag(cmdline, "--shot-6")) return runShot(6);

@@ -124,7 +124,9 @@ $pickersLimit = 260096
 # 完整测试器）后实测 324,096 B，原门槛只剩 1,536 B，故抬到 332,800 B（+2.7%）。
 # 同日再增规划族（planning.zig：看板 / 周历 / 甘特，C 档 cui_planning.c 3 控件）后实测 347,648 B，
 # 门槛由 332,800 抬到 356,352（+2.5%）。
-$docsLimit = 356352
+# 同日再增终端（terminal.zig，C 档 cui_terminal.c 5 API）后实测 369,664 B，
+# 门槛由 356,352 抬到 379,904（+2.8%）。
+$docsLimit = 379904
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -363,8 +365,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
         Check "docs:once-size" $false "bmp not written"
     }
 
-    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布；页 7 = 代码编辑器；页 8 = 规划（看板/周历/甘特）
-    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8) {
+    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布；页 7 = 代码编辑器；页 8 = 规划（看板/周历/甘特）；页 9 = 终端
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -395,7 +397,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             }
             # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
             # 火焰图/引导页大块是彩色或压暗，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } elseif ($pg -eq 8) { 150 } else { 40 }
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } elseif ($pg -eq 8) { 150 } elseif ($pg -eq 9) { 150 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -425,6 +427,9 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                 } elseif ($pg -eq 8) {
                     # 规划：看板三列的列头色点（次要/强调/成功三色）+ 卡片描边
                     Check "docs:page8-kanban" ($hued -gt 2000) ("hued=" + $hued)
+                } elseif ($pg -eq 9) {
+                    # 终端：绿/青/黄/红四色 ANSI 输出 → 成片彩色
+                    Check "docs:page9-ansi" ($hued -gt 2000) ("hued=" + $hued)
                 } else {
                     # 文件浏览器：文件夹是强调色实心块 → 成片的强调色像素（窗口里没有其它蓝）
                     Check "docs:page5-folders" ($accent -gt 150) ("accent=" + $accent)
