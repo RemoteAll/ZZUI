@@ -39,6 +39,17 @@ pub const Size = struct {
     h: f32 = 0,
 };
 
+/// 目录条目（文件浏览器用；对位 CUI 的 `cui_file_entry`）。
+/// `name` 指向后端给的 names 缓冲，只在本次渲染内有效。
+pub const FileEntry = struct {
+    name: []const u8 = "",
+    dir: bool = false,
+    /// 字节数（目录恒 0）。
+    size: u64 = 0,
+    /// Unix 秒（UTC）；0 = 未知。
+    modified: i64 = 0,
+};
+
 pub const Direction = enum { row, column };
 
 pub const Variant = enum { primary, secondary, ghost };

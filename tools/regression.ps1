@@ -113,9 +113,9 @@ $galleryLimit = 335872
 $pickersLimit = 253952
 # docs 于 2026-11-11 新增（markdown + diff 两族）：不塞 gallery（实测塞进去会让
 # gallery 从 334,336 涨到 366,080，顶穿 335,872 门槛），单独出产物。
-# 同日陆续加火焰图 / 引导 / 正则引擎（后者自写回溯引擎约 12 KB）后实测 241,152 B，
-# 门槛由 229,376 抬到 249,856（+3.6% 余量）。依据见 docs/决策记录.md。
-$docsLimit = 249856
+# 同日再增文件浏览器族（files.zig + 平台层 listDir + Win32 FindFirstFileW）后实测 268,288 B，
+# 门槛由 249,856 抬到 278,528（+3.8% 余量）。依据见 docs/决策记录.md。
+$docsLimit = 278528
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -354,8 +354,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
         Check "docs:once-size" $false "bmp not written"
     }
 
-    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导（压暗 + 聚光 + 卡片）；页 4 = 正则
-    foreach ($pg in 0, 1, 2, 3, 4) {
+    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器
+    foreach ($pg in 0, 1, 2, 3, 4, 5) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -386,7 +386,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             }
             # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
             # 火焰图/引导页大块是彩色或压暗，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } else { 40 }
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -402,8 +402,11 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                 } elseif ($pg -eq 3) {
                     # 引导：整窗被压暗 → 一中灰像素；无压暗时浅底不会出现
                     Check "docs:page3-shade" ($shaded -gt 20000) ("shaded=" + $shaded)
-                } else {
+                } elseif ($pg -eq 4) {
                     Check "docs:page4-textok" ($hued -gt 100) ("hued=" + $hued)
+                } else {
+                    # 文件浏览器：文件夹是强调色实心块 → 成片的强调色像素（窗口里没有其它蓝）
+                    Check "docs:page5-folders" ($accent -gt 150) ("accent=" + $accent)
                 }
             }
         } else {

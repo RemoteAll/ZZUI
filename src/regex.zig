@@ -537,8 +537,6 @@ const Matcher = struct {
         }
         return null;
     }
-
-
 };
 
 fn compile(pat: []const u8, err: ?*[]const u8) ?struct { nodes: [MAX_NODES]Node, lo: u32, hi: u32, groups: usize, names: [CAP][24]u8 } {

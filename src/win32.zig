@@ -381,6 +381,26 @@ pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetLocalTime(lpSystemTime: *SYSTEMTIME) callconv(.winapi) void;
 pub extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.winapi) void;
 
+// ---------------------------------------------------------------- 目录枚举
+/// `WIN32_FIND_DATAW`（C 布局，4 字节对齐）。`cFileName` 是长文件名（含扩展名）。
+pub const WIN32_FIND_DATAW = extern struct {
+    dwFileAttributes: DWORD,
+    ftCreationTime: FILETIME,
+    ftLastAccessTime: FILETIME,
+    ftLastWriteTime: FILETIME,
+    nFileSizeHigh: DWORD,
+    nFileSizeLow: DWORD,
+    dwReserved0: DWORD,
+    dwReserved1: DWORD,
+    cFileName: [260]u16,
+    cAlternateFileName: [14]u16,
+};
+pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x10;
+pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x2;
+pub extern "kernel32" fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: *WIN32_FIND_DATAW) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn FindNextFileW(hFindFile: HANDLE, lpFindFileData: *WIN32_FIND_DATAW) callconv(.winapi) BOOL;
+pub extern "kernel32" fn FindClose(hFindFile: HANDLE) callconv(.winapi) BOOL;
+
 pub extern "kernel32" fn InitializeCriticalSection(lpCriticalSection: *CRITICAL_SECTION) callconv(.winapi) void;
 pub extern "kernel32" fn EnterCriticalSection(lpCriticalSection: *CRITICAL_SECTION) callconv(.winapi) void;
 pub extern "kernel32" fn LeaveCriticalSection(lpCriticalSection: *CRITICAL_SECTION) callconv(.winapi) void;

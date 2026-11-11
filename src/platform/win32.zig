@@ -111,6 +111,72 @@ pub const Backend = struct {
         self.hwnd = null;
     }
 
+    /// 列出目录：写入 `out[0..n)`（`name` 指向 `names` 缓冲），返回条目数或 -1。
+    /// `hidden == false` 时跳过 `.`/`..` 与隐藏项。
+    pub fn listDir(_: *Backend, path: []const u8, out: []t.FileEntry, names: []u8, hidden: bool) i32 {
+        var wbuf: [1024]u16 = undefined;
+        var n: usize = 0;
+        for (path) |c| {
+            if (n + 3 >= wbuf.len) return -1;
+            wbuf[n] = c;
+            n += 1;
+        }
+        // 追加 "\*"
+        if (n == 0 or (wbuf[n - 1] != '/' and wbuf[n - 1] != '\\')) {
+            wbuf[n] = '\\';
+            n += 1;
+        }
+        wbuf[n] = '*';
+        n += 1;
+        wbuf[n] = 0;
+
+        var fd: w.WIN32_FIND_DATAW = undefined;
+        const h = w.FindFirstFileW(@ptrCast(&wbuf), &fd) orelse return -1;
+        defer _ = w.FindClose(h);
+
+        var count: i32 = 0;
+        var used: usize = 0;
+        while (true) {
+            const is_dir = fd.dwFileAttributes & w.FILE_ATTRIBUTE_DIRECTORY != 0;
+            const name_len = std.mem.indexOfScalar(u16, fd.cFileName[0..], 0) orelse fd.cFileName.len;
+            const nm = fd.cFileName[0..name_len];
+            const dot = name_len == 1 and nm[0] == '.';
+            const dotdot = name_len == 2 and nm[0] == '.' and nm[1] == '.';
+            const is_hidden = fd.dwFileAttributes & w.FILE_ATTRIBUTE_HIDDEN != 0;
+            if (!dot and !dotdot and (hidden or !is_hidden)) {
+                if (count >= out.len) break;
+                const cap = names.len - used;
+                const written = utf16ToUtf8(nm, names[used..]);
+                if (written > 0 and written <= cap) {
+                    const fsize = (@as(u64, fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
+                    out[@intCast(count)] = .{
+                        .name = names[used .. used + written],
+                        .dir = is_dir,
+                        .size = fsize,
+                        .modified = filetimeToUnix(fd.ftLastWriteTime),
+                    };
+                    used += written;
+                    count += 1;
+                }
+            }
+            if (w.FindNextFileW(h, &fd) == 0) break;
+        }
+        return count;
+    }
+
+    /// FILETIME（1601 起的 100ns）→ Unix 秒。
+    fn filetimeToUnix(ft: w.FILETIME) i64 {
+        const ticks = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        const epoch: u64 = 116_444_736_000_000_000; // 1601 → 1970
+        if (ticks < epoch) return 0;
+        return @intCast((ticks - epoch) / 10_000_000);
+    }
+
+    /// UTF-16 → UTF-8，返回写入字节数（0 = 缓冲不够或含非法码位）。
+    fn utf16ToUtf8(src: []const u16, dst: []u8) usize {
+        return std.unicode.utf16LeToUtf8(dst, src) catch 0;
+    }
+
     pub fn poll(self: *Backend) bool {
         var msg: w.MSG = undefined;
         while (w.PeekMessageW(&msg, null, 0, 0, w.PM_REMOVE) != 0) {

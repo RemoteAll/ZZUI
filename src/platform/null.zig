@@ -76,6 +76,12 @@ pub const Backend = struct {
         try bmpfile.saveBmp(path, self.buf, self.w, self.h);
     }
 
+    /// 无窗口后端没有文件系统：返回 -1（调用方应自行注入 `Context.list_fn`）。
+    /// headless 与单测都靠注入一个内存树来跑文件浏览器。
+    pub fn listDir(_: *Backend, _: []const u8, _: []t.FileEntry, _: []u8, _: bool) i32 {
+        return -1;
+    }
+
     /// 无系统字体可用：按 0.55 em 估宽（粗体 0.58）、1.35 em 估高（与 core 的默认测量一致）。
     pub fn measure(_: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         const n: f32 = @floatFromInt(s.len);

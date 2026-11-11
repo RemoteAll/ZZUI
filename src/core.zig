@@ -369,6 +369,9 @@ pub const Context = struct {
     text_pool_len: usize = 0,
     measure_ctx: ?*anyopaque = null,
     measure_fn: *const fn (?*anyopaque, []const u8, f32, bool) t.Size = defaultMeasure,
+    /// 目录枚举（`files.zig` 的默认数据源）。null = 平台层（`App` 每帧挂上）。
+    list_ctx: ?*anyopaque = null,
+    list_fn: ?*const fn (?*anyopaque, []const u8, []t.FileEntry, []u8, bool) i32 = null,
 
     // ------------------------------------------------------------ 帧生命周期
     /// 置位溢出标记；Debug 构建额外打印来源（发布构建不留字符串）。
@@ -442,6 +445,12 @@ pub const Context = struct {
     /// 量文本（可指定粗体；粗体与常规的宽度不同，markdown 换行必须用同一档量）。
     pub fn measureTextStyled(self: *Context, s: []const u8, size: f32, bold: bool) t.Size {
         return self.measure_fn(self.measure_ctx, s, size, bold);
+    }
+
+    /// 列出目录（`files.zig` 用）。后端没接的话返回 -1（调用方可自己给 `list_fn`）。
+    pub fn listDir(self: *Context, path: []const u8, out: []t.FileEntry, names: []u8, hidden: bool) i32 {
+        const f = self.list_fn orelse return -1;
+        return f(self.list_ctx, path, out, names, hidden);
     }
 
     // ------------------------------------------------------------ 容器

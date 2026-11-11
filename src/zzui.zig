@@ -42,6 +42,7 @@ pub const flame = @import("flame.zig");
 pub const strings = @import("strings.zig");
 pub const tour = @import("tour.zig");
 pub const regex = @import("regex.zig");
+pub const files = @import("files.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");
@@ -92,6 +93,8 @@ pub const App = struct {
         self.ui.time = self.backend.now();
         self.ui.measure_ctx = @ptrCast(&self.backend);
         self.ui.measure_fn = measureThunk;
+        self.ui.list_ctx = @ptrCast(&self.backend);
+        self.ui.list_fn = listThunk;
         self.ui.input = self.backend.input().*;
         self.ui.begin(sz.w, sz.h);
         return true;
@@ -134,4 +137,9 @@ pub const App = struct {
 fn measureThunk(ctx: ?*anyopaque, s: []const u8, size: f32, bold: bool) types.Size {
     const b: *platform.Backend = @ptrCast(@alignCast(ctx.?));
     return b.measure(s, size, bold);
+}
+
+fn listThunk(ctx: ?*anyopaque, path: []const u8, out: []types.FileEntry, names: []u8, hidden: bool) i32 {
+    const b: *platform.Backend = @ptrCast(@alignCast(ctx.?));
+    return b.listDir(path, out, names, hidden);
 }

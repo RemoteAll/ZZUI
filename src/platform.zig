@@ -131,6 +131,14 @@ pub const Backend = union(enum) {
         };
     }
 
+    /// 列出目录（`files.zig` 的默认数据源）。返回条目数或 -1。
+    pub fn listDir(self: *Backend, path: []const u8, out: []t.FileEntry, names: []u8, hidden: bool) i32 {
+        return switch (self.*) {
+            .win32 => |*b| b.listDir(path, out, names, hidden),
+            .null_backend => |*b| b.listDir(path, out, names, hidden),
+        };
+    }
+
     pub fn input(self: *Backend) *t.Input {
         return switch (self.*) {
             .win32 => |*b| &b.input,

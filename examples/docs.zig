@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -75,6 +75,11 @@ const State = struct {
     re_pattern: [32]u8 = @splat(0),
     re_pattern_len: usize = 0,
     re_caret: usize = 0,
+    /// 文件浏览器（真实目录：Win32 后端枚举，null 后端返回 -1）
+    fb_path: zzui.files.Path = .{},
+    fb: zzui.files.State = .{},
+    picked: [128]u8 = @splat(0),
+    picked_len: usize = 0,
 };
 
 /// 一段合成 profile：main → parse/render → 各自的子调用。
@@ -99,7 +104,8 @@ const flame_spans = [_]zzui.flame.Span{
     .{ .name = "glyphs", .start = 11.0, .end = 13.8, .depth = 4 },
 };
 
-fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .pad = 24, .gap = 14 });
+fn build(ui: *zzui.core.Context, st: *State) void {
+    var col = ui.column(.{ .pad = 24, .gap = 14 });
     defer col.end();
 
     zzui.widgets.heading(ui, "Docs", 2);
@@ -146,8 +152,8 @@ fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .p
         var on = true;
         zzui.widgets.checkbox(ui, "Auto save", &on);
         _ = zzui.widgets.input(ui, "Project name", &st.re_pattern, &st.re_pattern_len, &st.re_caret, .{ .placeholder = "my-project" });
-    } else {
-        zzui.extras.muted(ui, "Regex: type a pattern, every match in the text is listed");
+    } else if (st.page == 4) {
+        zzui.extras.muted(ui, "Regex: type a pattern, the first match is reported");
         _ = zzui.widgets.input(ui, "pattern", &st.re_pattern, &st.re_pattern_len, &st.re_caret, .{ .placeholder = "\\w+@\\w+" });
         const pat = st.re_pattern[0..st.re_pattern_len];
         var m = zzui.regex.Match{};
@@ -166,6 +172,20 @@ fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .p
         }
         zzui.widgets.separator(ui);
         _ = ui.textRun(re_sample, zzui.theme.font_body, zzui.theme.secondary);
+    } else {
+        zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
+        if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
+        const r = zzui.files.fileBrowser(ui, "docs-fb", &st.fb_path, &st.fb, .{ .height = 320 });
+        if (r.picked) |name| {
+            const n = @min(name.len, st.picked.len);
+            @memcpy(st.picked[0..n], name[0..n]);
+            st.picked_len = n;
+        }
+        if (st.picked_len > 0) {
+            zzui.extras.muted(ui, ui.frameStr(st.picked[0..st.picked_len]));
+        } else {
+            zzui.extras.muted(ui, "nothing picked yet");
+        }
     }
 }
 
@@ -184,6 +204,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-5")) return runShot(5);
     if (hasFlag(cmdline, "--shot-4")) return runShot(4);
     if (hasFlag(cmdline, "--shot-3")) return runShot(3);
     if (hasFlag(cmdline, "--shot-2")) return runShot(2);
