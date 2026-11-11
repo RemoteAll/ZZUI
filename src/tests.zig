@@ -40,6 +40,7 @@ test {
     _ = @import("tests_planning.zig");
     _ = @import("tests_terminal.zig");
     _ = @import("tests_social.zig");
+    _ = @import("tests_graph.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

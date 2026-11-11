@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -118,6 +118,12 @@ const State = struct {
     soc_liked: [3]bool = .{ false, false, true },
     soc_last: [64]u8 = @splat(0),
     soc_last_len: usize = 0,
+    /// 图族：提交图（泳道）+ 依赖图（分层/缩放平移）
+    gr_cs: zzui.graph.CommitState = .{},
+    gr_ds: zzui.graph.DepState = .{},
+    gr_topdown: bool = false,
+    gr_last: [64]u8 = @splat(0),
+    gr_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -446,6 +452,32 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             }
         }
         if (st.soc_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.soc_last[0..st.soc_last_len]));
+    } else if (st.page == 11) {
+        zzui.extras.muted(ui, "Graph: commit lanes (click / arrows / enter) and a dependency graph (wheel zooms, drag pans, F fits)");
+        const r = zzui.graph.commitGraph(ui, "docs-commits", gr_commits[0..], &st.gr_cs, .{ .height = 210 });
+        var sb: [72]u8 = undefined;
+        var note: []const u8 = "";
+        if (r.activated >= 0) {
+            const c = gr_commits[@intCast(r.activated)];
+            note = std.fmt.bufPrint(sb[0..], "activate {s} - {s}", .{ c.hash[0..7], c.message }) catch "activate";
+        }
+        {
+            var bar = ui.row(.{ .gap = 8 });
+            if (zzui.widgets.button(ui, if (st.gr_topdown) "Top down" else "Left to right", .{})) st.gr_topdown = !st.gr_topdown;
+            if (zzui.widgets.button(ui, "Focus core", .{})) st.gr_ds.sel = 0;
+            bar.end();
+        }
+        const d = zzui.graph.depGraph(ui, "docs-deps", gr_nodes[0..], gr_edges[0..], &st.gr_ds, .{ .height = 300, .top_down = st.gr_topdown });
+        if (note.len == 0) {
+            note = std.fmt.bufPrint(sb[0..], "picked {d}, zoom {d}%", .{
+                d.clicked,
+                @as(i32, @intFromFloat(st.gr_ds.zoom * 100)),
+            }) catch "picked";
+        }
+        const n = @min(note.len, st.gr_last.len);
+        @memcpy(st.gr_last[0..n], note[0..n]);
+        st.gr_last_len = n;
+        if (st.gr_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.gr_last[0..st.gr_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -479,6 +511,38 @@ const soc_thread = [_]struct { id: []const u8, author: []const u8, text: []const
     .{ .id = "c3", .author = "Ada Lovelace", .text = "Yes: same start goes side by side, 30 minutes apart cascades.", .depth = 1, .time = "10:06", .badge = "" },
 };
 
+/// 提交图示例（父提交必须排在后面）。
+const gr_commits = [_]zzui.graph.Commit{
+    .{ .hash = "91cbf17e2d", .message = "Graph family: commit lanes + dependency graph", .author = "Ada", .date = "2 hours ago", .refs = "main", .parent = .{ 1, 2 } },
+    .{ .hash = "5d0f2a98c1", .message = "Social page and comment thread", .author = "Bo", .date = "yesterday", .parent = .{ 3, -1 } },
+    .{ .hash = "e7104bb332", .message = "Terminal ANSI parsing + viewport", .author = "Ada", .date = "yesterday", .refs = "origin/main", .parent = .{ 3, -1 } },
+    .{ .hash = "a02d9c1440", .message = "Planning: kanban / week / gantt", .author = "Cy", .date = "2 days ago", .parent = .{ 4, -1 } },
+    .{ .hash = "77fe10c8b9", .message = "Pickers, upload and media families", .author = "Bo", .date = "3 days ago", .refs = "tag: v0.4.0", .parent = .{ 5, -1 } },
+    .{ .hash = "3c8871ad20", .message = "Editor, tour, strings, regex, files", .author = "Ada", .date = "4 days ago", .parent = .{ -1, -1 } },
+};
+
+/// 依赖图示例：分层 + 菱形分支（graph / tests 同层，最后汇到 app）。
+const gr_nodes = [_]zzui.graph.DepNode{
+    .{ .label = "theme", .detail = "tokens", .tone = .neutral },
+    .{ .label = "core", .detail = "immediate UI" },
+    .{ .label = "render", .detail = "software raster", .tone = .info },
+    .{ .label = "widgets", .detail = "153 controls" },
+    .{ .label = "graph", .detail = "this page", .tone = .accent },
+    .{ .label = "tests", .detail = "337 cases", .tone = .warn },
+    .{ .label = "app", .tone = .success },
+};
+
+const gr_edges = [_]zzui.graph.DepEdge{
+    .{ .from = 0, .to = 1 },
+    .{ .from = 1, .to = 2 },
+    .{ .from = 1, .to = 3 },
+    .{ .from = 2, .to = 3 },
+    .{ .from = 3, .to = 4 },
+    .{ .from = 3, .to = 5 },
+    .{ .from = 4, .to = 6 },
+    .{ .from = 5, .to = 6 },
+};
+
 /// 引导在页面内容之后跑（它要压在所有东西之上）。
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
     if (st.page != 3 or st.tour_step < 0) return;
@@ -494,6 +558,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-11")) return runShot(11);
     if (hasFlag(cmdline, "--shot-10")) return runShot(10);
     if (hasFlag(cmdline, "--shot-9")) return runShot(9);
     if (hasFlag(cmdline, "--shot-8")) return runShot(8);
