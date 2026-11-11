@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -111,6 +111,13 @@ const State = struct {
     term_ready: bool = false,
     term_last: [64]u8 = @splat(0),
     term_last_len: usize = 0,
+    /// 会话族（评论串 / 在线头像组 / 点赞状态）
+    soc_comments: zzui.social.CommentState = .{},
+    soc_pres: zzui.social.PresenceState = .{},
+    soc_likes: [3]i32 = .{ 4, 1, 0 },
+    soc_liked: [3]bool = .{ false, false, true },
+    soc_last: [64]u8 = @splat(0),
+    soc_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -412,6 +419,33 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             st.term_last_len = msg.len;
         }
         if (st.term_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.term_last[0..st.term_last_len]));
+    } else if (st.page == 10) {
+        zzui.extras.muted(ui, "Social: chat bubbles, a divider, the typing indicator, a comment thread (like / reply) and a presence row");
+        {
+            var who = ui.row(.{ .gap = 10 });
+            zzui.social.presence(ui, "docs-who", soc_users[0..], 4, 28, &st.soc_pres);
+            who.end();
+        }
+        zzui.social.chatDivider(ui, "Today");
+        zzui.social.chatMessage(ui, "Morning! The social family is in: bubbles, comments and presence.", .{ .author = "Ada", .time = "09:12" });
+        zzui.social.chatMessage(ui, "Presence avatars overlap until you hover them.", .{ .author = "Ada", .grouped = true });
+        zzui.social.chatMessage(ui, "Looks good - shipping the docs page now.", .{ .mine = true, .status = "Read", .time = "09:14" });
+        zzui.social.typingIndicator(ui, "Ada");
+        zzui.widgets.separator(ui);
+        for (soc_thread, 0..) |c, i| {
+            const flags = zzui.social.comment(ui, c.id, c.author, c.text, &st.soc_comments, .{
+                .time = c.time,
+                .depth = c.depth,
+                .badge = c.badge,
+                .likes = &st.soc_likes[i],
+                .liked = &st.soc_liked[i],
+            });
+            if (flags != 0) {
+                const msg = std.fmt.bufPrint(st.soc_last[0..], "{s}: {s}", .{ c.id, if (flags & zzui.social.COMMENT_LIKE != 0) "like" else "reply" }) catch "action";
+                st.soc_last_len = msg.len;
+            }
+        }
+        if (st.soc_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.soc_last[0..st.soc_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -429,6 +463,22 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     }
 }
 
+/// 会话族的示例数据：在线用户与评论串。
+const soc_users = [_]zzui.social.PresenceUser{
+    .{ .name = "Ada" },
+    .{ .name = "Bo", .color = .{ .r = 0x30, .g = 0xa4, .b = 0x6c, .a = 255 } },
+    .{ .name = "Cy" },
+    .{ .name = "Di", .idle = true },
+    .{ .name = "Ed" },
+    .{ .name = "Fay" },
+};
+
+const soc_thread = [_]struct { id: []const u8, author: []const u8, text: []const u8, depth: i32, time: []const u8, badge: []const u8 }{
+    .{ .id = "c1", .author = "Ada Lovelace", .text = "The planning page landed: kanban, week calendar and gantt all share one layout pass now.", .depth = 0, .time = "10:02", .badge = "Author" },
+    .{ .id = "c2", .author = "Bo Chen", .text = "Nice. Does the week calendar split overlapping events into lanes?", .depth = 1, .time = "10:05", .badge = "" },
+    .{ .id = "c3", .author = "Ada Lovelace", .text = "Yes: same start goes side by side, 30 minutes apart cascades.", .depth = 1, .time = "10:06", .badge = "" },
+};
+
 /// 引导在页面内容之后跑（它要压在所有东西之上）。
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
     if (st.page != 3 or st.tour_step < 0) return;
@@ -444,6 +494,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-10")) return runShot(10);
     if (hasFlag(cmdline, "--shot-9")) return runShot(9);
     if (hasFlag(cmdline, "--shot-8")) return runShot(8);
     if (hasFlag(cmdline, "--shot-7")) return runShot(7);
