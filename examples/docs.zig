@@ -1,4 +1,4 @@
-//! 文档与可视化族示例：markdown / diff / 火焰图（三页）。
+//! 文档、可视化与规划族示例：markdown / diff / 火焰图 / 追踪 / 编辑器 / 看板·周历·甘特（九页）。
 //! 单独一个产物是为了**体积分账**：几族代码约 34 KB，塞进 gallery 会把那个产物顶穿
 //! 335 KB 门槛（实测 gallery 13 页 334,336 B 时再挂 markdown + diff → 366,080 B）。
 //!
@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -95,6 +95,14 @@ const State = struct {
     ed: zzui.editor.EditorState = .{},
     ed_status: [96]u8 = @splat(0),
     ed_status_len: usize = 0,
+    /// 规划族：看板 / 周历 / 甘特（`plan_kind` 切换）
+    plan_kind: usize = 0,
+    kb: zzui.planning.Board = .{},
+    kb_st: zzui.planning.KanbanState = .{},
+    wk_st: zzui.planning.WeekState = .{},
+    gt_st: zzui.planning.GanttState = .{},
+    plan_last: [64]u8 = @splat(0),
+    plan_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -156,6 +164,33 @@ const editor_src =
     "fn rect(pad: f32) Rect {\n" ++
     "    return .{ .x = pad, .y = pad, .w = 64, .h = 20 };\n" ++
     "}\n";
+
+/// 规划族示例数据：周日历的事件与甘特图的任务。
+const plan_week = zzui.month.Date{ .year = 2026, .month = 11, .day = 9 }; // 周一
+
+const plan_cols = [_][]const u8{ "Todo", "Doing", "Done" };
+
+const plan_cards = [_][]const []const u8{
+    &.{ "Write the port notes", "Collect CUI screenshots" },
+    &.{"Kanban drag and drop"},
+    &.{ "Trace view landed", "Editor landed", "Regex tester landed" },
+};
+
+const plan_events = [_]zzui.planning.CalEvent{
+    .{ .title = "Standup", .day = 0, .start = 9.0, .end = 9.5, .tone = .accent },
+    .{ .title = "Design review", .detail = "Planning views", .day = 2, .start = 10.0, .end = 12.0, .tone = .info },
+    .{ .title = "Port review", .detail = "kanban + gantt", .day = 3, .start = 14.0, .end = 15.5, .tone = .warn },
+    .{ .title = "Release 0.4", .detail = "cut the tag", .day = 4, .start = 15.0, .end = 16.5, .tone = .success },
+    .{ .title = "Retro", .day = 6, .start = 17.0, .end = 18.0, .tone = .violet },
+};
+
+const plan_tasks = [_]zzui.planning.GanttTask{
+    .{ .name = "Design", .owner = "ann", .start = 0, .end = 4, .progress = 1.0, .tone = .accent },
+    .{ .name = "Kanban", .owner = "bo", .start = 2, .end = 8, .progress = 0.6, .depends_on = 0, .tone = .info },
+    .{ .name = "Week", .owner = "cy", .start = 3, .end = 9, .progress = 0.3, .depends_on = 0, .tone = .teal },
+    .{ .name = "Gantt", .owner = "di", .start = 6, .end = 12, .progress = 0.1, .depends_on = 1, .tone = .warn },
+    .{ .name = "Ship", .start = 13, .end = 14, .milestone = true, .depends_on = 3, .tone = .success },
+};
 
 /// 一次页面加载的请求（含一条 404）。
 const net_requests = [_]zzui.trace.NetRequest{
@@ -267,6 +302,74 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         }) catch "";
         zzui.extras.muted(ui, ui.frameStr(status));
         if (r.bracket_match >= 0) zzui.extras.muted(ui, "bracket pair found next to the caret");
+    } else if (st.page == 8) {
+        zzui.extras.muted(ui, "Planning: kanban (drag a card across columns), week calendar (drag an event) and gantt (drag a bar or its edges)");
+        const kinds = [_][]const u8{ "Kanban", "Week", "Gantt" };
+        zzui.controls.segmented(ui, "plan-kind", kinds[0..], &st.plan_kind);
+        if (st.plan_kind == 0) {
+            zzui.planning.kanbanBegin(ui, "docs-kb", &st.kb, &st.kb_st, .{ .height = 380, .width = 0 });
+            var c: usize = 0;
+            while (c < plan_cols.len) : (c += 1) {
+                const cards = plan_cards[c];
+                // 主题令牌是运行时的 var，颜色在这里取（不放 comptime 常量表）
+                const dot: ?zzui.types.Color = switch (c) {
+                    0 => zzui.theme.secondary,
+                    1 => zzui.theme.accent,
+                    else => zzui.theme.success,
+                };
+                _ = zzui.planning.kanbanColumnBegin(ui, &st.kb, plan_cols[c], @intCast(cards.len), .{
+                    .dot = dot,
+                    .limit = 4,
+                    .width = 220,
+                });
+                var k: usize = 0;
+                while (k < cards.len) : (k += 1) {
+                    const cid: i32 = @intCast(c * 10 + k);
+                    const hit = zzui.planning.kanbanCardBegin(ui, &st.kb, cid, .{ .title = cards[k] });
+                    if (hit) {
+                        const n = @min(cards[k].len, st.plan_last.len);
+                        @memcpy(st.plan_last[0..n], cards[k][0..n]);
+                        st.plan_last_len = n;
+                    }
+                    if (st.kb.card_open) {
+                        _ = ui.textRun(cards[k], zzui.theme.font_body, zzui.theme.text);
+                        zzui.planning.kanbanCardEnd(ui, &st.kb);
+                    }
+                }
+                zzui.planning.kanbanColumnEnd(ui, &st.kb);
+            }
+            if (zzui.planning.kanbanEnd(ui, &st.kb)) |m| {
+                var sb: [64]u8 = undefined;
+                const msg = std.fmt.bufPrint(sb[0..], "card {d}: column {d} -> {d} at {d}", .{ m.card, m.from_column, m.to_column, m.to_index }) catch "moved";
+                const n = @min(msg.len, st.plan_last.len);
+                @memcpy(st.plan_last[0..n], msg[0..n]);
+                st.plan_last_len = n;
+            }
+        } else if (st.plan_kind == 1) {
+            var ev = plan_events;
+            const hit = zzui.planning.weekCalendar(ui, "docs-wk", plan_week, ev[0..], &st.wk_st, .{
+                .height = 420,
+                .today = .{ .year = 2026, .month = 11, .day = 11 },
+                .now = 13.5,
+            });
+            if (hit) |i| {
+                const n = @min(ev[i].title.len, st.plan_last.len);
+                @memcpy(st.plan_last[0..n], ev[i].title[0..n]);
+                st.plan_last_len = n;
+            }
+        } else {
+            var tasks = plan_tasks;
+            const hit = zzui.planning.gantt(ui, "docs-gt", tasks[0..], plan_week, 16, &st.gt_st, .{
+                .today = 3,
+                .row_height = 38,
+            });
+            if (hit) |i| {
+                const n = @min(tasks[i].name.len, st.plan_last.len);
+                @memcpy(st.plan_last[0..n], tasks[i].name[0..n]);
+                st.plan_last_len = n;
+            }
+        }
+        if (st.plan_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.plan_last[0..st.plan_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -299,6 +402,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-8")) return runShot(8);
     if (hasFlag(cmdline, "--shot-7")) return runShot(7);
     if (hasFlag(cmdline, "--shot-6")) return runShot(6);
     if (hasFlag(cmdline, "--shot-5")) return runShot(5);

@@ -330,7 +330,9 @@ fn reveal(lay: *const Layout, v: *View, spans: []const Span, i: usize) void {
 
 // ---------------------------------------------------------------- 绘制
 
-fn toneColor(tone: Tone) t.Color {
+/// 色调 → 颜色（8 种语义色；深色主题下信息/青/紫三色提亮）。
+/// 导出给同在 "时间轴" 语义下的族（`planning` 的日历/甘特）复用，避免两套色。
+pub fn toneColor(tone: Tone) t.Color {
     const dark = theme.isDark();
     return switch (tone) {
         .neutral => theme.secondary,

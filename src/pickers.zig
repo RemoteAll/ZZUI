@@ -32,21 +32,7 @@ pub fn dateToDays(d: Date) i32 {
 
 /// 从天数还原日期。
 pub fn dateFromDays(days: i32) Date {
-    // Howard Hinnant 的 civil_from_days
-    const z: i64 = @as(i64, days) + 719468;
-    const era = @divFloor(z, 146097);
-    const doe = z - era * 146097;
-    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365);
-    const y = yoe + era * 400;
-    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
-    const mp = @divFloor(5 * doy + 2, 153);
-    const d = doy - @divFloor(153 * mp + 2, 5) + 1;
-    const m = if (mp < 10) mp + 3 else mp - 9;
-    return .{
-        .year = @intCast(if (m <= 2) y + 1 else y),
-        .month = @intCast(m),
-        .day = @intCast(d),
-    };
+    return month.fromDays(days);
 }
 
 /// `2026-11-10`；未选（year == 0）时写入 `--`。
