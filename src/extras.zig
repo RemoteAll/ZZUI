@@ -14,7 +14,7 @@ pub const ToneColors = struct { fg: t.Color, bg: t.Color };
 pub fn toneColors(tone: Tone) ToneColors {
     return switch (tone) {
         .neutral => .{ .fg = theme.secondary, .bg = theme.surface },
-        .accent => .{ .fg = theme.accent, .bg = t.Color.hex(0xE8EFFD, 255) },
+        .accent => .{ .fg = theme.accent, .bg = theme.accent_bg },
         .success => .{ .fg = theme.success, .bg = theme.success_bg },
         .warn => .{ .fg = theme.warn, .bg = theme.warn_bg },
         .danger => .{ .fg = theme.danger, .bg = theme.danger_bg },
@@ -200,8 +200,11 @@ pub const CardOpts = struct {
     pad: f32 = 16,
     gap: f32 = 10,
     radius: f32 = 12,
-    fill: t.Color = theme.bg,
-    border: ?t.Color = theme.border,
+    /// null = 跟随主题（默认值必须是编译期常量，而主题令牌已成 `var`，所以用 null 表示「用主题色」）。
+    fill: ?t.Color = null,
+    /// null = 跟随主题的边框色；`no_border` 才是不画边框。
+    border: ?t.Color = null,
+    no_border: bool = false,
 };
 
 /// 卡片容器（流式，宽度撑满父级）。
@@ -209,9 +212,9 @@ pub fn card(ui: *core.Context, opts: CardOpts) core.Scope {
     return ui.column(.{
         .pad = opts.pad,
         .gap = opts.gap,
-        .fill = opts.fill,
+        .fill = opts.fill orelse theme.bg,
         .radius = opts.radius,
-        .border = opts.border,
+        .border = if (opts.no_border) null else (opts.border orelse theme.border),
     });
 }
 

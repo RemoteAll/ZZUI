@@ -918,6 +918,8 @@ fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
 
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
+    // `--dark`：整套令牌换成深色（运行时替换，见 src/theme.zig）
+    if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
     if (hasFlag(cmdline, "--shot-12")) return runShot(12);
     if (hasFlag(cmdline, "--shot-11")) return runShot(11);

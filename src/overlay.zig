@@ -69,9 +69,10 @@ pub fn toast(ui: *core.Context, id: []const u8, label: []const u8, open: *bool, 
         .danger => .danger,
     };
     const c = extras.toneColors(tone);
-    ui.addBox(.{ .x = x, .y = y, .w = w, .h = h }, .{ .fill = theme.text, .radius = 10 });
+    // toast 是**反色浮层**：底与文字必须成对取令牌（拿 `theme.text` 当底，深色模式下就会变成浅底浅字）
+    ui.addBox(.{ .x = x, .y = y, .w = w, .h = h }, .{ .fill = theme.overlay_bg, .radius = 10 });
     ui.addBox(.{ .x = x, .y = y, .w = 4, .h = h }, .{ .fill = c.bg, .radius = 2 });
-    ui.addText(.{ .x = x + 14, .y = y + (h - m.h) / 2, .w = m.w + 4, .h = m.h }, label, theme.font_body, theme.accent_text);
+    ui.addText(.{ .x = x + 14, .y = y + (h - m.h) / 2, .w = m.w + 4, .h = m.h }, label, theme.font_body, theme.overlay_fg);
     return true;
 }
 
@@ -82,7 +83,8 @@ pub const PopoverOpts = struct {
     pad: f32 = 12,
     gap: f32 = 6,
     radius: f32 = 12,
-    fill: t.Color = theme.bg,
+    /// null = 跟随主题。
+    fill: ?t.Color = null,
     /// 打开时是否压暗页面（默认不压暗，只拦外部点击）。
     dim: ?t.Color = null,
     /// 向上弹出（需要 `estimate_h` 才能定位）。
@@ -116,7 +118,7 @@ pub fn popoverBegin(ui: *core.Context, id: []const u8, anchor: t.Rect, open: *bo
     _ = ui.panel(.{ .x = x, .y = y, .w = w, .h = 0 }, .{
         .pad = opts.pad,
         .gap = 8,
-        .fill = opts.fill,
+        .fill = opts.fill orelse theme.bg,
         .radius = opts.radius,
         .border = theme.border,
         .auto_height = true,

@@ -33,9 +33,20 @@ fn arc(ui: *core.Context, cx: f32, cy: f32, r: f32, start: f32, span: f32, color
 
 pub const Series = struct {
     values: []const f32,
-    color: t.Color = theme.accent,
+    /// 透明（alpha = 0）= 跟随主题强调色。
+    color: t.Color = t.Color.transparent,
     label: []const u8 = "",
 };
+
+/// 序列颜色：未显式指定时跟随当前主题。
+fn seriesColor(s: Series) t.Color {
+    return if (s.color.a == 0) theme.accent else s.color;
+}
+
+/// 选项里的颜色：未显式指定时跟随当前主题。
+fn optColor(c: t.Color) t.Color {
+    return if (c.a == 0) theme.accent else c;
+}
 
 pub const ChartOpts = struct {
     /// 0 表示撑满内容宽。
@@ -103,7 +114,7 @@ fn beginPlot(ui: *core.Context, series: []const Series, opts: ChartOpts) Plot {
     const rect = ui.reserve(opts.width, opts.height, opts.width <= 0);
     const rng = computeRange(series, opts);
     // 面板底
-    ui.addBox(rect, .{ .fill = t.Color.hex(0xFCFCFD, 255), .radius = 10 });
+    ui.addBox(rect, .{ .fill = theme.bg, .radius = 10 });
     ui.addBox(.{ .x = rect.x, .y = rect.y, .w = rect.w, .h = 1 }, .{ .fill = theme.border });
     ui.addBox(.{ .x = rect.x, .y = rect.y + rect.h - 1, .w = rect.w, .h = 1 }, .{ .fill = theme.border });
     ui.addBox(.{ .x = rect.x, .y = rect.y, .w = 1, .h = rect.h }, .{ .fill = theme.border });
@@ -123,7 +134,7 @@ fn beginPlot(ui: *core.Context, series: []const Series, opts: ChartOpts) Plot {
         while (i <= opts.grid) : (i += 1) {
             const f = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(opts.grid));
             const gy = plot.y + plot.h * f;
-            ui.addOverlayLine(.{ .x = plot.x, .y = gy }, .{ .x = plot.x + plot.w, .y = gy }, 1, t.Color.hex(0xEDF0F3, 255));
+            ui.addOverlayLine(.{ .x = plot.x, .y = gy }, .{ .x = plot.x + plot.w, .y = gy }, 1, theme.border);
             if (opts.labels and (i == 0 or i == opts.grid)) {
                 var buf: [24]u8 = @splat(0);
                 const v = rng.hi - (rng.hi - rng.lo) * f;
@@ -162,7 +173,8 @@ fn fillArea(ui: *core.Context, plot: Plot, values: []const f32, color: t.Color) 
 pub const SparkOpts = struct {
     width: f32 = 0,
     height: f32 = 32,
-    color: t.Color = theme.accent,
+    /// 透明（alpha = 0）= 跟随主题强调色。
+    color: t.Color = t.Color.transparent,
     fill: bool = false,
 };
 
@@ -173,7 +185,7 @@ pub fn sparkline(ui: *core.Context, values: []const f32, opts: SparkOpts) void {
     const plot = Plot{ .rect = rect, .lo = rng.lo, .hi = rng.hi };
     const step = plot.rect.w / @as(f32, @floatFromInt(values.len - 1));
 
-    if (opts.fill) fillArea(ui, plot, values, t.Color.hex(0xE8EFFD, 255));
+    if (opts.fill) fillArea(ui, plot, values, theme.withAlpha(if (opts.color.a == 0) theme.accent else opts.color, 48));
     const st = strideFor(values.len);
     var i: usize = st;
     while (i < values.len) : (i += st) {
@@ -181,7 +193,7 @@ pub fn sparkline(ui: *core.Context, values: []const f32, opts: SparkOpts) void {
             .{ .x = plot.rect.x + step * @as(f32, @floatFromInt(i - st)), .y = plot.y(values[i - st]) },
             .{ .x = plot.rect.x + step * @as(f32, @floatFromInt(i)), .y = plot.y(values[i]) },
             1.6,
-            opts.color,
+            optColor(opts.color),
         );
     }
 }
@@ -197,7 +209,7 @@ pub fn lineChart(ui: *core.Context, series: []const Series, opts: ChartOpts) voi
     const step = plot.rect.w / @as(f32, @floatFromInt(max_len - 1));
 
     // 面积填充（只对第一个序列）
-    if (opts.fill) fillArea(ui, plot, series[0].values, t.Color.hex(0xE8EFFD, 255));
+    if (opts.fill) fillArea(ui, plot, series[0].values, theme.withAlpha(seriesColor(series[0]), 48));
 
     for (series) |s| {
         if (s.values.len < 2) continue;
@@ -208,7 +220,7 @@ pub fn lineChart(ui: *core.Context, series: []const Series, opts: ChartOpts) voi
                 .{ .x = plot.rect.x + step * @as(f32, @floatFromInt(i - st)), .y = plot.y(s.values[i - st]) },
                 .{ .x = plot.rect.x + step * @as(f32, @floatFromInt(i)), .y = plot.y(s.values[i]) },
                 1.8,
-                s.color,
+                seriesColor(s),
             );
         }
         if (opts.points) {
@@ -216,7 +228,7 @@ pub fn lineChart(ui: *core.Context, series: []const Series, opts: ChartOpts) voi
             while (i < s.values.len) : (i += st) {
                 const px = plot.rect.x + step * @as(f32, @floatFromInt(i));
                 const py = plot.y(s.values[i]);
-                ui.addBox(.{ .x = px - 2.5, .y = py - 2.5, .w = 5, .h = 5 }, .{ .fill = theme.bg, .radius = 2.5, .border = s.color });
+                ui.addBox(.{ .x = px - 2.5, .y = py - 2.5, .w = 5, .h = 5 }, .{ .fill = theme.bg, .radius = 2.5, .border = seriesColor(s) });
             }
         }
     }
@@ -245,7 +257,7 @@ pub fn barChart(ui: *core.Context, series: []const Series, opts: ChartOpts) void
             const y = plot.y(s.values[i]);
             const top = @min(y, zero_y);
             const h = @max(1, @abs(zero_y - y));
-            ui.addBox(.{ .x = x, .y = top, .w = bar_w, .h = h }, .{ .fill = s.color, .radius = @min(3, bar_w / 2) });
+            ui.addBox(.{ .x = x, .y = top, .w = bar_w, .h = h }, .{ .fill = seriesColor(s), .radius = @min(3, bar_w / 2) });
         }
     }
     _ = base_y;

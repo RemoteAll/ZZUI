@@ -73,14 +73,14 @@ pub const Table = struct {
         const it = ui.interactEx(row_id, rect, true);
 
         if (selected) {
-            ui.addBox(rect, .{ .fill = t.Color.hex(0xE8EFFD, 255) });
+            ui.addBox(rect, .{ .fill = theme.accent_bg });
         } else if (it.hover) {
             ui.addBox(rect, .{ .fill = theme.surface });
         } else if (self.opts.striped and (index % 2) == 1) {
-            ui.addBox(rect, .{ .fill = t.Color.hex(0xFAFBFC, 255) });
+            ui.addBox(rect, .{ .fill = theme.row_alt });
         }
         // 行分隔线
-        ui.addBox(.{ .x = rect.x, .y = rect.y + rect.h - 1, .w = rect.w, .h = 1 }, .{ .fill = t.Color.hex(0xEDF0F3, 255) });
+        ui.addBox(.{ .x = rect.x, .y = rect.y + rect.h - 1, .w = rect.w, .h = 1 }, .{ .fill = theme.hair });
 
         return .{ .table = self, .rect = rect, .clicked = it.clicked };
     }
@@ -141,7 +141,7 @@ pub fn begin(
     const id_hash = core.Context.idOf(id);
 
     // 表头底色
-    ui.addBox(header, .{ .fill = t.Color.hex(0xF7F8FA, 255) });
+    ui.addBox(header, .{ .fill = theme.raised });
     ui.addBox(.{ .x = header.x, .y = header.y + header.h - 1, .w = header.w, .h = 1 }, .{ .fill = theme.border });
 
     var x = header.x;

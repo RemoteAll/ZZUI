@@ -350,6 +350,14 @@ fn build(ui: *zzui.core.Context, st: *State) void {
 
     zzui.widgets.heading(ui, "Pickers", 2);
     zzui.widgets.secondary(ui, "Multi-select, date ranges, time, wheels, dials, rulers, signature, dropzone and avatar.");
+    {
+        var bar = ui.row(.{ .gap = 12 });
+        defer bar.end();
+        // 运行时切主题：整套令牌替换（见 src/theme.zig），不重建窗口
+        const label = if (zzui.theme.isDark()) "Theme: dark" else "Theme: light";
+        if (zzui.widgets.button(ui, label, .{})) zzui.theme.toggle();
+        zzui.extras.muted(ui, "click to switch palettes at runtime");
+    }
     zzui.controls.tabs(ui, "pickers-pages", page_names[0..], &st.page);
 
     var body = ui.scroll(.{ .id = "pickers-body", .height = ui.height - 190, .gap = 14 });

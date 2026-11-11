@@ -63,7 +63,7 @@ pub fn dockBegin(ui: *core.Context, id: []const u8, state: *DockState, opts: Doc
     // 底座
     ui.addBox(
         .{ .x = state.base.x, .y = state.base.y + 4, .w = state.base.w, .h = h - 8 },
-        .{ .fill = t.Color.hex(0xF7F8FA, 255), .radius = 14, .border = theme.border },
+        .{ .fill = theme.raised, .radius = 14, .border = theme.border },
     );
     _ = id;
 }

@@ -255,7 +255,7 @@ pub fn monthCalendar(
             const hit = ui.interactEx(core.Context.idOf(id) ^ (0xD00 + cell_index), cell, true);
 
             const bg: t.Color = if (is_sel)
-                t.Color.hex(0xE8EFFD, 255)
+                theme.accent_bg
             else if (hit.hover)
                 theme.surface
             else

@@ -119,7 +119,7 @@ pub fn controlSwitch(ui: *core.Context, label: []const u8, value: *bool) void {
     const knob_d: f32 = 18;
     const kx = if (on) tr.x + tr.w - knob_d - 3 else tr.x + 3;
     ui.addBox(.{ .x = kx, .y = tr.y + 3, .w = knob_d, .h = knob_d }, .{
-        .fill = t.Color.hex(0xFFFFFF, 255),
+        .fill = theme.bg,
         .radius = knob_d / 2,
     });
     if (it.focused) {
@@ -147,7 +147,7 @@ pub fn checkbox(ui: *core.Context, label: []const u8, value: *bool) void {
         ui.addOverlayLine(.{ .x = bx + 4.5, .y = by + 9.0 }, .{ .x = bx + 7.5, .y = by + 12.5 }, 2, theme.accent_text);
         ui.addOverlayLine(.{ .x = bx + 7.5, .y = by + 12.5 }, .{ .x = bx + 13.5, .y = by + 5.5 }, 2, theme.accent_text);
     } else {
-        ringBox(ui, .{ .x = bx, .y = by, .w = box, .h = box }, 4, t.Color.hex(0xFFFFFF, 255), theme.border);
+        ringBox(ui, .{ .x = bx, .y = by, .w = box, .h = box }, 4, theme.bg, theme.border);
     }
     ui.addText(.{ .x = bx + box + gap, .y = rect.y + (h - m.h) / 2, .w = m.w, .h = m.h }, label, theme.font_body, theme.text);
 }
@@ -171,11 +171,11 @@ pub fn radio(ui: *core.Context, label: []const u8, value: *u32, this_value: u32)
         ui.addBox(.{ .x = cx, .y = cy, .w = d, .h = d }, .{ .fill = theme.accent, .radius = d / 2 });
         const dot: f32 = 8;
         ui.addBox(.{ .x = cx + (d - dot) / 2, .y = cy + (d - dot) / 2, .w = dot, .h = dot }, .{
-            .fill = t.Color.hex(0xFFFFFF, 255),
+            .fill = theme.bg,
             .radius = dot / 2,
         });
     } else {
-        ringBox(ui, .{ .x = cx, .y = cy, .w = d, .h = d }, d / 2, t.Color.hex(0xFFFFFF, 255), theme.border);
+        ringBox(ui, .{ .x = cx, .y = cy, .w = d, .h = d }, d / 2, theme.bg, theme.border);
     }
     ui.addText(.{ .x = cx + d + gap, .y = rect.y + (h - m.h) / 2, .w = m.w, .h = m.h }, label, theme.font_body, theme.text);
 }
@@ -226,7 +226,7 @@ pub fn slider(ui: *core.Context, label: []const u8, value: *f32, min: f32, max: 
     }
     ui.addBox(.{ .x = thumb_x, .y = thumb_y, .w = d, .h = d }, .{ .fill = theme.accent, .radius = d / 2 });
     ui.addBox(.{ .x = thumb_x + 2, .y = thumb_y + 2, .w = d - 4, .h = d - 4 }, .{
-        .fill = t.Color.hex(0xFFFFFF, 255),
+        .fill = theme.bg,
         .radius = (d - 4) / 2,
     });
 }
@@ -334,7 +334,7 @@ pub fn input(
     }
 
     const border = if (it.focused) theme.accent else theme.border;
-    ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), border);
+    ringBox(ui, rect, theme.radius_control, theme.bg, border);
 
     const content = buf[0..len.*];
     const tx = rect.x + pad_x;

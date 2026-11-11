@@ -353,7 +353,7 @@ pub const GridRow = struct {
 
         // 编辑态
         if (cell_hit.clicked) st.edit_caret = @min(st.edit_len, st.edit_buf.len);
-        widgets.ringBox(ui, r, 0, t.Color.hex(0xFFFFFF, 255), theme.accent);
+        widgets.ringBox(ui, r, 0, theme.bg, theme.accent);
         if (cell_hit.hover or ui.input.down) {
             // 同一时刻只应有一个编辑框获得按键：用 focus 判定
         }
@@ -396,13 +396,13 @@ pub fn dataGridRow(ui: *core.Context, index: usize) ?GridRow {
     const is_sel = if (g.selected) |sel| (index < sel.len and sel[index]) else false;
 
     if (is_sel) {
-        ui.addBox(rect, .{ .fill = t.Color.hex(0xE8EFFD, 255) });
+        ui.addBox(rect, .{ .fill = theme.accent_bg });
     } else if (it.hover) {
         ui.addBox(rect, .{ .fill = theme.surface });
     } else if (g.opts.striped and (index % 2) == 1) {
-        ui.addBox(rect, .{ .fill = t.Color.hex(0xFAFBFC, 255) });
+        ui.addBox(rect, .{ .fill = theme.row_alt });
     }
-    ui.addBox(.{ .x = rect.x, .y = rect.y + rect.h - 1, .w = rect.w, .h = 1 }, .{ .fill = t.Color.hex(0xEDF0F3, 255) });
+    ui.addBox(.{ .x = rect.x, .y = rect.y + rect.h - 1, .w = rect.w, .h = 1 }, .{ .fill = theme.hair });
 
     // 勾选列
     if (g.opts.checkboxes) {
@@ -900,7 +900,7 @@ pub fn filterBar(
         const m = ui.measureText(label, theme.font_small);
         const chip = ui.reserve(m.w + 42, 28, false);
         const hit = ui.interactEx(idOf(id, 0xC41C +% @as(u64, @intCast(fi))), chip, true);
-        widgets.ringBox(ui, chip, theme.radius_pill, t.Color.hex(0xE8EFFD, 255), theme.accent);
+        widgets.ringBox(ui, chip, theme.radius_pill, theme.accent_bg, theme.accent);
         ui.addText(.{ .x = chip.x + 10, .y = chip.y + (chip.h - m.h) / 2, .w = m.w, .h = m.h }, label, theme.font_small, theme.accent);
         // 右侧 × 清除
         const xr = t.Rect{ .x = chip.x + chip.w - 20, .y = chip.y + (chip.h - 14) / 2, .w = 14, .h = 14 };

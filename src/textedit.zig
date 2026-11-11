@@ -152,7 +152,7 @@ pub fn textarea(
         }
     }
 
-    widgets.ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), if (it.focused) theme.accent else theme.border);
+    widgets.ringBox(ui, rect, theme.radius_control, theme.bg, if (it.focused) theme.accent else theme.border);
 
     var lines2: [MAX_LINES][]const u8 = @splat("");
     var starts2: [MAX_LINES]usize = @splat(0);
@@ -341,7 +341,7 @@ pub fn search(
     }
 
     const border = if (it.focused) theme.accent else theme.border;
-    widgets.ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), border);
+    widgets.ringBox(ui, rect, theme.radius_control, theme.bg, border);
 
     // 放大镜：圆 + 手柄
     const gx = rect.x + 15;
@@ -439,7 +439,7 @@ pub fn number(ui: *core.Context, id: []const u8, value: *f32, opts: NumberOpts) 
     if (value.* < opts.min) value.* = opts.min;
     if (value.* > opts.max) value.* = opts.max;
 
-    widgets.ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), if (it.focused) theme.accent else theme.border);
+    widgets.ringBox(ui, rect, theme.radius_control, theme.bg, if (it.focused) theme.accent else theme.border);
     ui.addText(.{ .x = rect.x + 10, .y = rect.y + (h - sm.h) / 2, .w = sm.w, .h = sm.h }, ui.frameStr(s), theme.font_body, theme.text);
     if (opts.suffix.len > 0) {
         const um = ui.measureText(opts.suffix, theme.font_small);

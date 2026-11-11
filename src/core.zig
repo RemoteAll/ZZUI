@@ -45,7 +45,8 @@ pub const Node = struct {
     border_width: f32 = 0,
     text: []const u8 = "",
     font_size: f32 = theme.font_body,
-    text_color: t.Color = theme.text,
+    /// 占位：文本节点一律显式给色（默认值必须是编译期常量，主题令牌已成 `var`）。
+    text_color: t.Color = t.Color.transparent,
     /// 等宽字体（代码块 / 十六进制视图）。后端按 (size, weight, mono) 缓存字体。
     mono: bool = false,
     /// 构建时的裁剪矩形（零尺寸 = 不裁剪）。

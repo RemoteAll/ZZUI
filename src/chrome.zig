@@ -42,7 +42,7 @@ pub fn menuBar(ui: *core.Context, id: []const u8, menus: []const MenuDef, open: 
         .pad = opts.pad,
         .gap = opts.gap,
         .dir = .row,
-        .fill = t.Color.hex(0xF7F8FA, 255),
+        .fill = theme.raised,
         .border = theme.border,
     });
     defer bar.end();
@@ -59,7 +59,7 @@ pub fn menuBar(ui: *core.Context, id: []const u8, menus: []const MenuDef, open: 
         if (is_open) {
             ui.addBox(btn, .{ .fill = theme.surface, .radius = 6 });
         } else if (it.hover) {
-            ui.addBox(btn, .{ .fill = t.Color.hex(0xEDF0F3, 255), .radius = 6 });
+            ui.addBox(btn, .{ .fill = theme.hair, .radius = 6 });
         }
         ui.addText(.{
             .x = btn.x + (btn.w - text_m.w) / 2,
@@ -171,7 +171,7 @@ pub fn statusBar(
     opts: StatusBarOpts,
 ) ?StatusPick {
     const rect = ui.reserve(0, opts.height, true);
-    ui.addBox(rect, .{ .fill = t.Color.hex(0xF7F8FA, 255) });
+    ui.addBox(rect, .{ .fill = theme.raised });
     ui.addBox(.{ .x = rect.x, .y = rect.y, .w = rect.w, .h = 1 }, .{ .fill = theme.border });
 
     var picked: ?StatusPick = null;

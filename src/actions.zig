@@ -356,7 +356,7 @@ pub fn inlineEdit(
     // 这样点进来的那一帧就能直接拿焦点（不需要再点一次）。
     if (it.clicked) state.caret = @min(len.*, buf.len);
     const border = if (it.focused) theme.accent else theme.border;
-    widgets.ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), border);
+    widgets.ringBox(ui, rect, theme.radius_control, theme.bg, border);
 
     var changed = false;
     if (it.focused) widgets.editKeys(ui, buf, len, &state.caret, &changed);
@@ -596,7 +596,7 @@ pub fn moneyInput(
 
     // 编辑态
     if (it.clicked) state.caret = @min(state.len, state.buf.len);
-    widgets.ringBox(ui, rect, theme.radius_control, t.Color.hex(0xFFFFFF, 255), if (it.focused) theme.accent else theme.border);
+    widgets.ringBox(ui, rect, theme.radius_control, theme.bg, if (it.focused) theme.accent else theme.border);
     var edited = false;
     if (it.focused) widgets.editKeys(ui, &state.buf, &state.len, &state.caret, &edited);
     const cur = state.buf[0..@min(state.len, state.buf.len)];
@@ -657,7 +657,7 @@ pub fn reactions(ui: *core.Context, id: []const u8, items: []Reaction) ?usize {
         const r = ui.reserve(w, h, false);
         const salt: u64 = 0x2EA87000 +% @as(u64, @intCast(i));
         const hit = ui.interactEx(core.Context.idOf(id) ^ salt, r, true);
-        const bg: t.Color = if (it.active) t.Color.hex(0xE8EFFD, 255) else if (hit.hover) theme.surface else theme.bg;
+        const bg: t.Color = if (it.active) theme.accent_bg else if (hit.hover) theme.surface else theme.bg;
         widgets.ringBox(ui, r, theme.radius_pill, bg, if (it.active) theme.accent else theme.border);
         ui.addText(
             .{ .x = r.x + 8, .y = r.y + (h - cm.h) / 2, .w = cm.w, .h = cm.h },

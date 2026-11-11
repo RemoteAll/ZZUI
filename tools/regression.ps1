@@ -104,7 +104,10 @@ Write-Host "== 1.3 size gate (hello = CUI baseline 303104 B; gallery = full-cont
 #             它的意义是「全量装载的代价」，门槛按控件集增长单独设定。
 #   pickers = 选择器族单独产物（不塞 gallery，否则 gallery 会顶穿门槛）
 $helloLimit = 303104
-$galleryLimit = 327680
+# gallery 于 2026-11-11 加入「运行时主题切换」（令牌由 `const` 变 `var`，全量装载里令牌读取从
+# 4 字节立即数变成 RIP 相对加载）后实测 327,168 B；原门槛 327,680 只剩 512 B 余量，故抬到
+# 335,872 B（+2.6% 余量）。依据见 docs/决策记录.md。
+$galleryLimit = 335872
 # pickers 于 2026-11-11 新增媒体族（5 控件 + 渲染分层基础设施）后实测 241,152 B；
 # 门槛由 229,376 抬到 253,952（+5% 余量），依据已写进 docs/决策记录.md。
 $pickersLimit = 253952
@@ -328,6 +331,52 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
     }
 } else {
     Skip "pickers" "zzui-pickers-x64.exe not found"
+}
+
+Write-Host "== 1.8 theme switching (--dark must repaint every token) =="
+if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
+    $tmp5 = Join-Path $env:TEMP 'zzui-regression-theme'
+    if (-not (Test-Path $tmp5)) { New-Item -ItemType Directory -Path $tmp5 -Force | Out-Null }
+    $lb = Join-Path $tmp5 'zzui-gallery-p0.bmp'
+    Remove-Item $lb -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--shot-0') $tmp5
+    Check "theme:light-exit" ($r.Code -eq 0) ("exit=" + $r.Code)
+    $darkBg = -1
+    if (Test-Path $lb) {
+        $g = [IO.File]::ReadAllBytes($lb)
+        $gw = [BitConverter]::ToInt32($g, 18)
+        $gh = [BitConverter]::ToInt32($g, 22)
+        $off = 54 + ($gh - 5) * $gw * 4 + 4 * 4
+        $lightBg = [int]$g[$off] + [int]$g[$off+1] + [int]$g[$off+2]
+        Check "theme:light-bg" ($lightBg -gt 600) ("sum=" + $lightBg)
+    } else {
+        Check "theme:light-bg" $false "bmp not written"
+    }
+    Remove-Item $lb -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-gallery-x64.exe') @('--dark', '--shot-0') $tmp5
+    Check "theme:dark-exit" ($r.Code -eq 0) ("exit=" + $r.Code)
+    if (Test-Path $lb) {
+        $g = [IO.File]::ReadAllBytes($lb)
+        $gw = [BitConverter]::ToInt32($g, 18)
+        $gh = [BitConverter]::ToInt32($g, 22)
+        $off = 54 + ($gh - 5) * $gw * 4 + 4 * 4
+        $darkBg = [int]$g[$off] + [int]$g[$off+1] + [int]$g[$off+2]
+        # 深色底 0x15171A -> 三通道和 = 62
+        Check "theme:dark-bg" ($darkBg -lt 120) ("sum=" + $darkBg)
+        # 深色下文字要变成浅色：扫一段区域找亮像素
+        $light = 0
+        for ($y = 40; $y -lt 300; $y += 2) {
+            for ($x = 20; $x -lt 600; $x += 2) {
+                $off2 = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                if ($g[$off2] -gt 180 -and $g[$off2+1] -gt 180 -and $g[$off2+2] -gt 180) { $light++ }
+            }
+        }
+        Check "theme:dark-text" ($light -gt 100) ("bright=" + $light)
+    } else {
+        Check "theme:dark-bg" $false "bmp not written"
+    }
+} else {
+    Skip "theme" "zzui-gallery-x64.exe not found"
 }
 
 Write-Host "== 2. continuity =="

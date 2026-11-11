@@ -254,7 +254,7 @@ pub fn navItem(ui: *core.Context, label: []const u8, active: bool) bool {
     const r = ui.reserve(0, h, true);
     const it = ui.interactEx(pairId(label, 0x9A11), r, true);
     if (active) {
-        ui.addBox(r, .{ .fill = t.Color.hex(0xE8EFFD, 255), .radius = 8 });
+        ui.addBox(r, .{ .fill = theme.accent_bg, .radius = 8 });
         ui.addBox(.{ .x = r.x, .y = r.y + 6, .w = 3, .h = h - 12 }, .{ .fill = theme.accent, .radius = 2 });
     } else if (it.hover) {
         ui.addBox(r, .{ .fill = theme.surface, .radius = 8 });
