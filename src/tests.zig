@@ -41,6 +41,7 @@ test {
     _ = @import("tests_terminal.zig");
     _ = @import("tests_social.zig");
     _ = @import("tests_graph.zig");
+    _ = @import("tests_nodes.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

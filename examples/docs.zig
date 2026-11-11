@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -118,6 +118,24 @@ const State = struct {
     soc_liked: [3]bool = .{ false, false, true },
     soc_last: [64]u8 = @splat(0),
     soc_last_len: usize = 0,
+    /// 节点编辑器（节点位置与连线由我们持有，控件只画与报事件）
+    nd_st: zzui.nodes.State = .{},
+    nd_view: zzui.nodes.View = .{},
+    nd_nodes: [nd_node_data.len]NdNode = nd_node_data,
+    nd_links: [8]NdLink = .{
+        .{ .id = 100, .from = 11, .to = 21 },
+        .{ .id = 101, .from = 22, .to = 31 },
+        .{ .id = 102, .from = 32, .to = 41 },
+        .{ .id = 0, .from = 0, .to = 0 },
+        .{ .id = 0, .from = 0, .to = 0 },
+        .{ .id = 0, .from = 0, .to = 0 },
+        .{ .id = 0, .from = 0, .to = 0 },
+        .{ .id = 0, .from = 0, .to = 0 },
+    },
+    nd_link_n: usize = 3,
+    nd_next_link: i32 = 200,
+    nd_last: [72]u8 = @splat(0),
+    nd_last_len: usize = 0,
     /// 图族：提交图（泳道）+ 依赖图（分层/缩放平移）
     gr_cs: zzui.graph.CommitState = .{},
     gr_ds: zzui.graph.DepState = .{},
@@ -478,6 +496,71 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         @memcpy(st.gr_last[0..n], note[0..n]);
         st.gr_last_len = n;
         if (st.gr_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.gr_last[0..st.gr_last_len]));
+    } else if (st.page == 12) {
+        zzui.extras.muted(ui, "Nodes: drag cards, drag from a pin to wire them, Shift/Ctrl adds, Delete removes, Alt+drag pans");
+        if (zzui.nodes.editorBegin(ui, "docs-nodes", &st.nd_st, &st.nd_view, .{ .height = 470, .minimap = true })) {
+            for (&st.nd_nodes) |*nd| {
+                _ = zzui.nodes.nodeBegin(ui, &st.nd_st, nd.id, &nd.x, &nd.y, nd.title, .{});
+                if (nd.in_pin != 0) _ = zzui.nodes.nodeInput(ui, &st.nd_st, nd.in_pin, "in", .{ .type = 1 });
+                if (nd.id == 1) {
+                    // 内容宿主：里面的控件按 100% 布局，指针会被反缩放映射
+                    zzui.nodes.contentBegin(ui, &st.nd_st, 34);
+                    _ = zzui.widgets.button(ui, "Load", .{});
+                    zzui.nodes.contentEnd(ui, &st.nd_st);
+                }
+                if (nd.out_pin != 0) _ = zzui.nodes.nodeOutput(ui, &st.nd_st, nd.out_pin, "out", .{ .type = 1 });
+                zzui.nodes.nodeEnd(ui, &st.nd_st);
+            }
+            for (st.nd_links[0..st.nd_link_n]) |l| _ = zzui.nodes.nodeLink(ui, &st.nd_st, l.id, l.from, l.to);
+
+            var from_pin: i32 = 0;
+            var to_pin: i32 = 0;
+            while (zzui.nodes.linkCreated(&st.nd_st, &from_pin, &to_pin)) {
+                if (st.nd_link_n < st.nd_links.len) {
+                    st.nd_links[st.nd_link_n] = .{ .id = st.nd_next_link, .from = from_pin, .to = to_pin };
+                    st.nd_link_n += 1;
+                    st.nd_next_link += 1;
+                }
+                const msg = std.fmt.bufPrint(st.nd_last[0..], "link {d} -> {d}", .{ from_pin, to_pin }) catch "link";
+                st.nd_last_len = msg.len;
+            }
+            var dead_link: i32 = 0;
+            while (zzui.nodes.linkRemoved(&st.nd_st, &dead_link)) {
+                var i: usize = 0;
+                while (i < st.nd_link_n) : (i += 1) {
+                    if (st.nd_links[i].id != dead_link) continue;
+                    st.nd_links[i] = st.nd_links[st.nd_link_n - 1];
+                    st.nd_link_n -= 1;
+                    break;
+                }
+                const msg = std.fmt.bufPrint(st.nd_last[0..], "removed link {d}", .{dead_link}) catch "removed";
+                st.nd_last_len = msg.len;
+            }
+            var dead_node: i32 = 0;
+            while (zzui.nodes.nodeDeleted(&st.nd_st, &dead_node)) {
+                var i: usize = 0;
+                while (i < st.nd_nodes.len) : (i += 1) {
+                    if (st.nd_nodes[i].id != dead_node) continue;
+                    var k = i;
+                    while (k + 1 < st.nd_nodes.len) : (k += 1) st.nd_nodes[k] = st.nd_nodes[k + 1];
+                    st.nd_nodes[st.nd_nodes.len - 1] = .{ .id = 0, .x = 0, .y = 0, .title = "", .in_pin = 0, .out_pin = 0 };
+                    break;
+                }
+                const msg = std.fmt.bufPrint(st.nd_last[0..], "removed node {d}", .{dead_node}) catch "removed";
+                st.nd_last_len = msg.len;
+            }
+            zzui.nodes.editorEnd(ui, &st.nd_st);
+        }
+        var note_buf: [72]u8 = undefined;
+        if (st.nd_last_len == 0) {
+            const msg = std.fmt.bufPrint(note_buf[0..], "selected {d} card(s), zoom {d}%", .{
+                zzui.nodes.selectedCount(&st.nd_st),
+                @as(i32, @intFromFloat(st.nd_view.zoom * 100)),
+            }) catch "nodes";
+            st.nd_last_len = msg.len;
+            @memcpy(st.nd_last[0..msg.len], msg);
+        }
+        zzui.extras.muted(ui, ui.frameStr(st.nd_last[0..st.nd_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -543,6 +626,16 @@ const gr_edges = [_]zzui.graph.DepEdge{
     .{ .from = 5, .to = 6 },
 };
 
+/// 节点编辑器的示例数据（位置可变，所以放在 State 里）。
+const NdNode = struct { id: i32, x: f32, y: f32, title: []const u8, in_pin: i32, out_pin: i32 };
+const NdLink = struct { id: i32, from: i32, to: i32 };
+const nd_node_data = [_]NdNode{
+    .{ .id = 1, .x = 24, .y = 24, .title = "Image", .in_pin = 0, .out_pin = 11 },
+    .{ .id = 2, .x = 320, .y = 30, .title = "Blur", .in_pin = 21, .out_pin = 22 },
+    .{ .id = 3, .x = 320, .y = 230, .title = "Mixer", .in_pin = 31, .out_pin = 32 },
+    .{ .id = 4, .x = 24, .y = 230, .title = "Output", .in_pin = 41, .out_pin = 0 },
+};
+
 /// 引导在页面内容之后跑（它要压在所有东西之上）。
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
     if (st.page != 3 or st.tour_step < 0) return;
@@ -558,6 +651,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-12")) return runShot(12);
     if (hasFlag(cmdline, "--shot-11")) return runShot(11);
     if (hasFlag(cmdline, "--shot-10")) return runShot(10);
     if (hasFlag(cmdline, "--shot-9")) return runShot(9);

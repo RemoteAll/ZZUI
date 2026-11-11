@@ -50,6 +50,7 @@ pub const planning = @import("planning.zig");
 pub const terminal = @import("terminal.zig");
 pub const social = @import("social.zig");
 pub const graph = @import("graph.zig");
+pub const nodes = @import("nodes.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");
