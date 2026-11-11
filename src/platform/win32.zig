@@ -28,6 +28,17 @@ var g_wheel: f32 = 0;
 var g_quit: bool = false;
 var g_need_resize: bool = false;
 
+/// 拖放路径（UTF-8，最多 4 个，单个最长 260 字节）。
+pub const MAX_DROPS = 4;
+pub const DROP_PATH_MAX = 260;
+var g_drops: [MAX_DROPS][DROP_PATH_MAX]u8 = @splat(@splat(0));
+var g_drop_lens: [MAX_DROPS]u16 = @splat(0);
+var g_drop_n: usize = 0;
+/// 本帧有效的拖放条数（`droppedFile` 读它）。
+/// 路径**不进 Backend**：每帧拷贝 1 KB 数组实测让 hello **+3.5 KB**（memcpy 展开）；
+/// 拖放本来就是「本帧事件」，全局缓冲反而正合适。
+var g_drop_active: u8 = 0;
+
 const FontSlot = struct {
     key: f32 = 0,
     font: ?w.HFONT = null,
@@ -78,6 +89,8 @@ pub const Backend = struct {
         var self = Backend{ .hwnd = hwnd };
         self.dpi = queryDpi(hwnd);
         self.createSurface();
+        // 开启文件拖放（不收的话永远不会收到 WM_DROPFILES）
+        w.DragAcceptFiles(hwnd, 1);
         if (show) {
             _ = w.ShowWindow(hwnd, w.SW_SHOW);
             _ = w.UpdateWindow(hwnd);
@@ -141,6 +154,10 @@ pub const Backend = struct {
         } else {
             self.input.right_click = null;
         }
+        // 拖放：「本帧事件」，不残留（避免同一批文件反复触发上传）
+        g_drop_active = @intCast(g_drop_n);
+        g_drop_n = 0;
+        self.input.dropped = g_drop_active;
         if (g_need_resize) {
             g_need_resize = false;
             self.createSurface();
@@ -168,6 +185,13 @@ pub const Backend = struct {
     pub fn pixels(self: *Backend) []u8 {
         const n = @as(usize, self.px_w) * @as(usize, self.px_h) * 4;
         return self.bits[0..n];
+    }
+
+    /// 本帧第 `i` 个拖入文件的路径（超出 `input.dropped` 返回 null）。
+    pub fn droppedFile(self: *Backend, i: usize) ?[]const u8 {
+        _ = self;
+        if (i >= g_drop_active or i >= MAX_DROPS) return null;
+        return g_drops[i][0..g_drop_lens[i]];
     }
 
     /// 把当前 DIB 写成 BMP（含 GDI 文本），用于无人工干预的视觉校验。
@@ -368,6 +392,23 @@ fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi)
             const raw: u16 = @truncate(wp >> 16);
             const delta: i16 = @bitCast(raw);
             g_wheel += @as(f32, @floatFromInt(delta)) / 120.0;
+            return 0;
+        },
+        w.WM_DROPFILES => {
+            // wParam = HDROP：枚举拖入的文件，转成 UTF-8 存进本帧队列
+            const hdrop: w.HANDLE = @ptrFromInt(wp);
+            const count = w.DragQueryFileW(hdrop, 0xFFFFFFFF, undefined, 0);
+            var i: u32 = 0;
+            while (i < count and g_drop_n < MAX_DROPS) : (i += 1) {
+                var wbuf: [DROP_PATH_MAX]u16 = undefined;
+                const n = w.DragQueryFileW(hdrop, i, &wbuf, DROP_PATH_MAX);
+                if (n == 0) continue;
+                const bytes = std.unicode.utf16LeToUtf8(g_drops[g_drop_n][0..DROP_PATH_MAX], wbuf[0..n]) catch continue;
+                if (bytes == 0) continue;
+                g_drop_lens[g_drop_n] = @intCast(bytes);
+                g_drop_n += 1;
+            }
+            w.DragFinish(hdrop);
             return 0;
         },
         w.WM_CLOSE => {

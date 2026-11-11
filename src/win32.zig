@@ -703,6 +703,8 @@ pub const WM_RBUTTONDOWN: UINT = 0x0204;
 pub const WM_RBUTTONUP: UINT = 0x0205;
 pub const WM_KEYDOWN: UINT = 0x0100;
 pub const WM_CHAR: UINT = 0x0102;
+/// 文件拖放（需 `DragAcceptFiles(hwnd, TRUE)` 才会收到）。`wParam` 是 HDROP。
+pub const WM_DROPFILES: UINT = 0x0233;
 pub const VK_ESCAPE: UINT = 0x001B;
 pub const WM_SETCURSOR: UINT = 0x0020;
 pub const IDC_ARROW: usize = 32512;
@@ -774,4 +776,11 @@ pub extern "gdi32" fn TextOutW(
 ) callconv(.winapi) BOOL;
 pub extern "gdi32" fn SaveDC(hdc: HDC) callconv(.winapi) i32;
 pub extern "gdi32" fn RestoreDC(hdc: HDC, nSavedDC: i32) callconv(.winapi) BOOL;
+
+// ------------------------------------------------------------ shell32（文件拖放）
+// 只需三个函数：开启接收拖放、枚举拖入的文件、结束。`shell32.dll` 是系统组件，
+// 链接它只多一项导入表（几十字节），不是静态拷贝。
+pub extern "shell32" fn DragAcceptFiles(hWnd: HWND, fAccept: BOOL) callconv(.winapi) void;
+pub extern "shell32" fn DragQueryFileW(hDrop: HANDLE, iFile: UINT, lpszFile: [*]u16, cch: UINT) callconv(.winapi) UINT;
+pub extern "shell32" fn DragFinish(hDrop: HANDLE) callconv(.winapi) void;
 pub extern "gdi32" fn IntersectClipRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) callconv(.winapi) i32;

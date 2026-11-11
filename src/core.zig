@@ -12,6 +12,30 @@ const theme = @import("theme.zig");
 
 pub const NodeKind = enum { box, text };
 
+/// 位图指令：**不进 `Command` 联合体**。
+/// 原因（实测）：union 尺寸由最大成员决定，多一个 60 字节的 image 成员会把
+/// `cmds: [512]Command` 与 `Context` 的拷代码全部抬高一档，hello 实测 **+13.8 KB**。
+/// 改走独立数组（`Context.addImage`），体积零增长。
+pub const ImageCmd = struct {
+    rect: t.Rect,
+    pixels: []const u8,
+    w: u32,
+    h: u32,
+    /// > 0 时当圆角遮罩用（头像就是 radius = size/2）。
+    radius: f32 = 0,
+    /// 裁剪矩形（零尺寸 = 不裁剪）；用 `Rect` 而不是 `?Rect` 可以省 4 字节对齐。
+    clip: t.Rect = .{},
+    layer: u8 = 0,
+};
+
+/// 位图源：调用方持有的 BGRA 缓冲（顶行在前，与 BMP 相同）+ 尺寸。
+/// 框架**不解码图片**（不引 stb_image 291 KB 源），只负责缩放与圆角遮罩绘制。
+pub const ImageSrc = struct {
+    pixels: []const u8,
+    w: u32,
+    h: u32,
+};
+
 pub const Node = struct {
     kind: NodeKind = .box,
     rect: t.Rect = .{},
@@ -57,6 +81,8 @@ pub const LineCmd = struct {
     layer: u8 = 0,
 };
 
+pub const ImageCmdExtra = struct {};
+
 pub const Command = union(enum) {
     rect: RectCmd,
     text: TextCmd,
@@ -72,6 +98,10 @@ pub const MAX_OVERLAYS = 192;
 pub const MAX_TEXT_POOL = 8192;
 pub const MAX_SCROLLS = 16;
 pub const MAX_TIPS = 16;
+/// 位图指令独立通道（不进 `Command` 联合体，原因见 `ImageCmd` 注释）。
+/// 8 项是实测过的够用量：一屏里的头像/缩略图场景 3~5 个，
+/// 每多一项都会让 `Context` 变大（结构体越大，`App` 的拷贝代码越多）。
+pub const MAX_IMAGES = 8;
 
 const ScrollState = struct {
     id: u64 = 0,
@@ -237,6 +267,9 @@ pub const Context = struct {
     /// 先于节点绘制？不：overlay 在节点之后绘制（勾、焦点环等）。
     overlays: [MAX_OVERLAYS]Command = undefined,
     overlay_count: usize = 0,
+    /// 位图指令（独立通道）：`render.renderImages` 每层调用一次。
+    images: [MAX_IMAGES]ImageCmd = undefined,
+    image_count: usize = 0,
     stack: [MAX_DEPTH]Frame = undefined,
     depth: usize = 0,
     width: f32 = 0,
@@ -299,6 +332,7 @@ pub const Context = struct {
         self.node_count = 0;
         self.cmd_count = 0;
         self.overlay_count = 0;
+        self.image_count = 0;
         self.text_pool_len = 0;
         self.overlay_layer = 0;
         self.overlay_backdrop_clicked = false;
@@ -460,6 +494,27 @@ pub const Context = struct {
 
     pub fn addText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {
         _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color });
+    }
+
+    /// 画位图（BGRA，顶行在前）。`radius > 0` 时做圆角/圆形遮罩（头像就是 radius = 边长/2）。
+    /// 框架**不解码**图片格式：像素由调用方提供（解码是应用层的选择，避免把 291 KB 的
+    /// stb_image 拖进产物）。位图走**独立通道**，不进 `Command` 联合体（见 `ImageCmd` 注释）。
+    pub fn addImage(self: *Context, rect: t.Rect, src: ImageSrc, radius: f32) void {
+        if (src.w == 0 or src.h == 0 or src.pixels.len < @as(usize, src.w) * src.h * 4) return;
+        if (self.image_count >= MAX_IMAGES) {
+            self.markOverflow("images");
+            return;
+        }
+        self.images[self.image_count] = .{
+            .rect = rect,
+            .pixels = src.pixels,
+            .w = src.w,
+            .h = src.h,
+            .radius = radius,
+            .clip = self.clip orelse .{},
+            .layer = self.overlay_layer,
+        };
+        self.image_count += 1;
     }
 
     /// 等宽文本（代码块 / 十六进制视图）：只有字体族不同，其余同 `addText`。

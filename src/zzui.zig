@@ -21,6 +21,7 @@ pub const grid = @import("grid.zig");
 pub const dock = @import("dock.zig");
 pub const dockspace = @import("dockspace.zig");
 pub const pickers = @import("pickers.zig");
+pub const upload = @import("upload.zig");
 pub const charts = @import("charts.zig");
 pub const chrome = @import("chrome.zig");
 pub const disclosure = @import("disclosure.zig");
@@ -82,6 +83,16 @@ pub const App = struct {
         return self.backend.saveSurface(path);
     }
 
+    /// 本帧拖入窗口的第 `i` 个文件路径（UTF-8）。帧外无效 —— 拖放是「本帧事件」。
+    pub fn droppedFile(self: *App, i: usize) ?[]const u8 {
+        return self.backend.droppedFile(i);
+    }
+
+    /// 本帧拖入的文件数（等价于 `ui.input.dropped`）。
+    pub fn droppedCount(self: *App) u8 {
+        return self.ui.input.dropped;
+    }
+
     /// 结束一帧：生成绘制指令、按层软件光栅 + 文本、呈现。
     pub fn end(self: *App) void {
         self.ui.paint();
@@ -92,6 +103,7 @@ pub const App = struct {
         var layer: u8 = 0;
         while (layer <= self.ui.max_layer) : (layer += 1) {
             render.render(&self.ui, self.backend.pixels(), wpx, hpx, s, layer);
+            render.renderImages(&self.ui, self.backend.pixels(), wpx, hpx, s, layer);
             self.backend.drawTextLayer(&self.ui, layer);
         }
         self.backend.present();

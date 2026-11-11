@@ -159,6 +159,9 @@ pub const Input = struct {
     click: ?Point = null,
     /// 本帧右键释放的位置（上下文菜单用；Win32 WM_RBUTTONUP）。
     right_click: ?Point = null,
+    /// 本帧拖入窗口的文件数（路径用 `App.droppedFile(i)` 取，不在 Input 里拷贝，
+    /// 因为 Input 是每帧按值拷贝的，内联路径缓冲会让拷贝变大很多）。
+    dropped: u8 = 0,
     quit: bool = false,
     keys: [8]Key = @splat(.unknown),
     key_count: u8 = 0,

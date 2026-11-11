@@ -10,6 +10,9 @@ pub const Backend = struct {
     buf: []u8,
     input: t.Input = .{},
     frames: usize = 0,
+    /// 注入的拖放路径（测试用：模拟 OS 拖入文件）。
+    drops: [4][260]u8 = @splat(@splat(0)),
+    drop_lens: [4]u16 = @splat(0),
 
     pub fn init(width: u32, height: u32) !Backend {
         const len = @as(usize, width) * @as(usize, height) * 4;
@@ -18,13 +21,29 @@ pub const Backend = struct {
         return .{ .w = width, .h = height, .buf = buf };
     }
 
+    /// 模拟「用户拖入了一个文件」（只对下一帧有效）。
+    pub fn pushDrop(self: *Backend, path: []const u8) void {
+        if (self.input.dropped >= 4 or path.len == 0) return;
+        const i = self.input.dropped;
+        const n = @min(path.len, 260);
+        @memcpy(self.drops[i][0..n], path[0..n]);
+        self.drop_lens[i] = @intCast(n);
+        self.input.dropped += 1;
+    }
+
+    pub fn droppedFile(self: *Backend, i: usize) ?[]const u8 {
+        if (i >= self.input.dropped or i >= 4) return null;
+        return self.drops[i][0..self.drop_lens[i]];
+    }
+
     pub fn deinit(self: *Backend) void {
         std.heap.page_allocator.free(self.buf);
     }
 
     pub fn poll(self: *Backend) bool {
         self.frames += 1;
-        _ = &self;
+        // 拖放是「本帧事件」：第二帧起清空（与 Win32 后端一致）
+        if (self.frames > 1) self.input.dropped = 0;
         return self.frames <= 1;
     }
 

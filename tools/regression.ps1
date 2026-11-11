@@ -105,7 +105,7 @@ Write-Host "== 1.3 size gate (hello = CUI baseline 303104 B; gallery = full-cont
 #   pickers = 选择器族单独产物（不塞 gallery，否则 gallery 会顶穿门槛）
 $helloLimit = 303104
 $galleryLimit = 327680
-$pickersLimit = 212992
+$pickersLimit = 229376
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -226,7 +226,7 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     Skip "gallery" "zzui-gallery-x64.exe not found"
 }
 
-Write-Host "== 1.7 pickers example (--once / --shot / --shot-1) =="
+Write-Host "== 1.7 pickers example (--once / --shot-0..2, three pages) =="
 if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
     $tmp4 = Join-Path $env:TEMP 'zzui-regression-pickers'
     if (-not (Test-Path $tmp4)) { New-Item -ItemType Directory -Path $tmp4 -Force | Out-Null }
@@ -240,11 +240,22 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
     } else {
         Check "pickers:once-size" $false "bmp not written"
     }
-    # 两页真渲染：都要有文字像素（页 1 = 滚到底：表盘/刻度尺/直方图/签名板）
-    foreach ($pg in 0, 1) {
-        $pbmp = if ($pg -eq 0) { Join-Path $tmp4 'zzui-pickers-shot.bmp' } else { Join-Path $tmp4 'zzui-pickers-shot1.bmp' }
+    # 三页真渲染：每页都要有文字像素 + 强调色像素
+    # 页 0 = Inputs（日历/多选/滚轮，文字密集）；
+    # 页 1 = Graphs（表盘/刻度尺/直方图/签名板，矢量为主）；
+    # 页 2 = Upload（头像位图 + 拖放区）。
+    foreach ($pg in 0, 1, 2) {
+        if ($pg -eq 0) {
+            $pbmp = Join-Path $tmp4 'zzui-pickers-shot.bmp'
+            $flag = '--shot'
+        } elseif ($pg -eq 1) {
+            $pbmp = Join-Path $tmp4 'zzui-pickers-shot1.bmp'
+            $flag = '--shot-1'
+        } else {
+            $pbmp = Join-Path $tmp4 'zzui-pickers-shot2.bmp'
+            $flag = '--shot-2'
+        }
         Remove-Item $pbmp -ErrorAction SilentlyContinue
-        $flag = if ($pg -eq 0) { '--shot' } else { '--shot-1' }
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-pickers-x64.exe') @($flag) $tmp4
         Check "pickers:page$pg-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
         if (Test-Path $pbmp) {
@@ -260,11 +271,24 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
                     if ($g[$off] -eq 0xEB -and $g[$off+1] -eq 0x63 -and $g[$off+2] -eq 0x25) { $accent++ }
                 }
             }
-            # 页 0（日历/多选/滚轮）文字密集；页 1 以矢量图形（表盘/刻度尺/直方图/签名板）为主，
+            # 页 0（日历/多选/滚轮）文字密集；页 1/2 以矢量图形与位图为主，
             # 文字天然少 → 文字门槛按页取，另外用强调色像素证明控件真的画了。
             $textGate = if ($pg -eq 0) { 200 } else { 60 }
             Check "pickers:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             Check "pickers:page$pg-accent" ($accent -gt 40) ("accent=" + $accent)
+            # 页 2 的头像是**真位图**（渐变，蓝红分量差很大）：证明图像通道真的上屏了，
+            # 而不是只画了占位方块。取头像所在区域扫描彩色像素。
+            if ($pg -eq 2) {
+                $colored = 0
+                for ($y = 170; $y -lt 270; $y += 1) {
+                    for ($x = 20; $x -lt 120; $x += 1) {
+                        $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                        $db = [int]$g[$off] - [int]$g[$off+2]
+                        if ($db -gt 30 -or $db -lt -30) { $colored++ }
+                    }
+                }
+                Check "pickers:page2-bitmap" ($colored -gt 200) ("colored=" + $colored)
+            }
         } else {
             Check "pickers:page$pg-text" $false "bmp not written"
         }

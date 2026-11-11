@@ -22,6 +22,15 @@ pub fn render(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f
     }
 }
 
+/// 位图画（独立通道）：在矩形/线段之后、文本之前，逐层调用。
+pub fn renderImages(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f32, layer: u8) void {
+    var i: usize = 0;
+    while (i < ui.image_count) : (i += 1) {
+        const c = ui.images[i];
+        if (c.layer == layer) blitImage(pixels, width, height, c, scale);
+    }
+}
+
 pub fn clear(pixels: []u8, width: u32, height: u32, color: t.Color) void {
     const n = @as(usize, width) * height;
     var i: usize = 0;
@@ -86,8 +95,7 @@ fn fillRoundRect(
     }
 }
 
-fn insideRound(x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) bool {
-    if (r <= 0) return true;
+fn insideRound(x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) bool {    if (r <= 0) return true;
     var cx = x;
     var cy = y;
     if (x < x0 + r) {
@@ -180,6 +188,68 @@ fn put(pixels: []u8, idx: usize, c: t.Color) void {
     pixels[idx + 1] = c.g;
     pixels[idx + 2] = c.r;
     pixels[idx + 3] = c.a;
+}
+
+/// 位图 blit：最近邻缩放 + 圆角/圆形遮罩 + 裁剪。
+/// 源像素是 BGRA（顶行在前），与 BMP/DIB 同口径，所以不需要翻转。
+fn blitImage(pixels: []u8, width: u32, height: u32, cmd: core.ImageCmd, scale: f32) void {
+    const sw = cmd.w;
+    const sh = cmd.h;
+    if (sw == 0 or sh == 0) return;
+    const src_row = @as(usize, sw) * 4;
+    if (cmd.pixels.len < src_row * @as(usize, sh)) return;
+
+    var x0 = px(cmd.rect.x, scale);
+    var y0 = px(cmd.rect.y, scale);
+    var x1 = px(cmd.rect.x + cmd.rect.w, scale);
+    var y1 = px(cmd.rect.y + cmd.rect.h, scale);
+    if (cmd.clip.w > 0 and cmd.clip.h > 0) {
+        const cl = cmd.clip;
+        x0 = @max(x0, px(cl.x, scale));
+        y0 = @max(y0, px(cl.y, scale));
+        x1 = @min(x1, px(cl.x + cl.w, scale));
+        y1 = @min(y1, px(cl.y + cl.h, scale));
+    }
+    if (x1 <= x0 or y1 <= y0) return;
+
+    const half_short = @min(@as(f32, @floatFromInt(x1 - x0)), @as(f32, @floatFromInt(y1 - y0))) / 2;
+    const r = @min(@round(cmd.radius * scale), half_short);
+
+    const cw: i32 = @intCast(width);
+    const ch: i32 = @intCast(height);
+    const cx0: i32 = @max(x0, 0);
+    const cy0: i32 = @max(y0, 0);
+    const cx1: i32 = @min(x1, cw);
+    const cy1: i32 = @min(y1, ch);
+
+    const dst_w: f32 = @floatFromInt(x1 - x0);
+    const dst_h: f32 = @floatFromInt(y1 - y0);
+
+    var y: i32 = cy0;
+    while (y < cy1) : (y += 1) {
+        var x: i32 = cx0;
+        while (x < cx1) : (x += 1) {
+            const fx: f32 = @floatFromInt(x);
+            const fy: f32 = @floatFromInt(y);
+            if (r > 0 and !insideRound(fx, fy, @floatFromInt(x0), @floatFromInt(y0), @floatFromInt(x1), @floatFromInt(y1), r)) continue;
+            // 最近邻采样（像素中心对齐）
+            const u: f32 = (fx + 0.5 - @as(f32, @floatFromInt(x0))) / dst_w;
+            const v: f32 = (fy + 0.5 - @as(f32, @floatFromInt(y0))) / dst_h;
+            var sx: usize = @intFromFloat(u * @as(f32, @floatFromInt(sw)));
+            var sy: usize = @intFromFloat(v * @as(f32, @floatFromInt(sh)));
+            if (sx >= sw) sx = sw - 1;
+            if (sy >= sh) sy = sh - 1;
+            const si = sy * src_row + sx * 4;
+            const c = t.Color{
+                .b = cmd.pixels[si],
+                .g = cmd.pixels[si + 1],
+                .r = cmd.pixels[si + 2],
+                .a = cmd.pixels[si + 3],
+            };
+            const idx: usize = (@as(usize, @intCast(y)) * width + @as(usize, @intCast(x))) * 4;
+            blend(pixels, idx, c);
+        }
+    }
 }
 
 fn blend(pixels: []u8, idx: usize, c: t.Color) void {
