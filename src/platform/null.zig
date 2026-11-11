@@ -76,9 +76,10 @@ pub const Backend = struct {
         try bmpfile.saveBmp(path, self.buf, self.w, self.h);
     }
 
-    /// 无系统字体可用：按 0.55 em 估宽、1.35 em 估高（与 core 的默认测量一致）。
-    pub fn measure(_: *Backend, s: []const u8, size_px: f32) t.Size {
+    /// 无系统字体可用：按 0.55 em 估宽（粗体 0.58）、1.35 em 估高（与 core 的默认测量一致）。
+    pub fn measure(_: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         const n: f32 = @floatFromInt(s.len);
-        return .{ .w = n * size_px * 0.55, .h = size_px * 1.35 };
+        const em: f32 = if (bold) 0.58 else 0.55;
+        return .{ .w = n * size_px * em, .h = size_px * 1.35 };
     }
 };

@@ -36,6 +36,8 @@ pub const viz = @import("viz.zig");
 pub const curves = @import("curves.zig");
 pub const month = @import("month.zig");
 pub const timeline = @import("timeline.zig");
+pub const markdown = @import("markdown.zig");
+pub const diff = @import("diff.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");
@@ -125,7 +127,7 @@ pub const App = struct {
     }
 };
 
-fn measureThunk(ctx: ?*anyopaque, s: []const u8, size: f32) types.Size {
+fn measureThunk(ctx: ?*anyopaque, s: []const u8, size: f32, bold: bool) types.Size {
     const b: *platform.Backend = @ptrCast(@alignCast(ctx.?));
-    return b.measure(s, size);
+    return b.measure(s, size, bold);
 }

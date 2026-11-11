@@ -49,6 +49,10 @@ pub const Node = struct {
     text_color: t.Color = t.Color.transparent,
     /// 等宽字体（代码块 / 十六进制视图）。后端按 (size, weight, mono) 缓存字体。
     mono: bool = false,
+    /// 粗体（markdown 的 `**bold**` / 标题）。后端按 (size, bold, mono) 缓存字体。
+    bold: bool = false,
+    /// 斜体（markdown 的 `*italic*`）。测量按正体宽度算（斜体宽度几乎相同）。
+    italic: bool = false,
     /// 构建时的裁剪矩形（零尺寸 = 不裁剪）。
     clip: ?t.Rect = null,
     /// 构建时的层号（主树 0，浮层从 1 起）。
@@ -71,6 +75,8 @@ pub const TextCmd = struct {
     clip: ?t.Rect = null,
     layer: u8 = 0,
     mono: bool = false,
+    bold: bool = false,
+    italic: bool = false,
 };
 
 pub const LineCmd = struct {
@@ -104,6 +110,9 @@ pub const MAX_TIPS = 16;
 /// 动效轨道池（`anim.zig` 用）：按 id 存「当前值」，跨帧保留。
 /// 16 条够一屏的悬停/选中过渡用；满了就按**最久未使用**淘汰（不会无限增长）。
 pub const MAX_TRACKS = 16;
+/// 尺寸池：浮层/弹框的上一帧真实尺寸。同时出现的绝对面板就一两个，8 项足够；
+/// 每项 24 字节，池越大 `Context` 越大（会连带抬高 `App` 的拷贝代码）。
+pub const MAX_SIZES = 8;
 /// 位图指令独立通道（不进 `Command` 联合体，原因见 `ImageCmd` 注释）。
 /// 8 项是实测过的够用量：一屏里的头像/缩略图场景 3~5 个，
 /// 每多一项都会让 `Context` 变大（结构体越大，`App` 的拷贝代码越多）。
@@ -120,6 +129,14 @@ const ScrollState = struct {
 const TipState = struct {
     id: u64 = 0,
     start: f64 = 0,
+    /// 最近一次被用到的时间（池满时按它淘汰）。
+    used: f64 = 0,
+};
+
+const SizeState = struct {
+    id: u64 = 0,
+    w: f32 = 0,
+    h: f32 = 0,
     /// 最近一次被用到的时间（池满时按它淘汰）。
     used: f64 = 0,
 };
@@ -149,6 +166,8 @@ const Frame = struct {
     absolute: bool = false,
     /// 绝对面板的高度按内容确定（浮层弹框/提示不用预先估高度）。
     auto_h: bool = false,
+    /// 非 0 时把本帧量到的真实尺寸回填进尺寸池（下一帧 `knownSize` 读它定位）。
+    size_key: u64 = 0,
 };
 
 const Hit = struct {
@@ -206,6 +225,9 @@ pub const PanelOpts = struct {
     dir: t.Direction = .column,
     /// 高度由内容决定（`rect.h` 被忽略），浮层弹框用。
     auto_height: bool = false,
+    /// 非 0 时**帧末**把真实尺寸回填进尺寸池；下一帧 `knownSize` 用它定位置。
+    /// 这是「帧末统一布局」在立即模式里的形态：本帧画完才知道多高，下一帧才排得上。
+    size_key: u64 = 0,
 };
 
 pub const OverlayOpts = struct {
@@ -331,6 +353,9 @@ pub const Context = struct {
     /// 悬停开始时间（tooltip 用），跨帧保留。
     tips: [MAX_TIPS]TipState = @splat(.{}),
     tip_n: usize = 0,
+    /// 绝对面板的上一帧真实尺寸（`PanelOpts.size_key` 帧末回填），跨帧保留、有界、LRU。
+    sizes: [MAX_SIZES]SizeState = @splat(.{}),
+    size_n: usize = 0,
     /// 动画轨道（`anim.zig`），跨帧保留、有界。
     tracks: [MAX_TRACKS]AnimTrack = @splat(.{}),
     track_n: usize = 0,
@@ -340,7 +365,7 @@ pub const Context = struct {
     text_pool: [MAX_TEXT_POOL]u8 = undefined,
     text_pool_len: usize = 0,
     measure_ctx: ?*anyopaque = null,
-    measure_fn: *const fn (?*anyopaque, []const u8, f32) t.Size = defaultMeasure,
+    measure_fn: *const fn (?*anyopaque, []const u8, f32, bool) t.Size = defaultMeasure,
 
     // ------------------------------------------------------------ 帧生命周期
     /// 置位溢出标记；Debug 构建额外打印来源（发布构建不留字符串）。
@@ -408,7 +433,12 @@ pub const Context = struct {
     }
 
     pub fn measureText(self: *Context, s: []const u8, size: f32) t.Size {
-        return self.measure_fn(self.measure_ctx, s, size);
+        return self.measure_fn(self.measure_ctx, s, size, false);
+    }
+
+    /// 量文本（可指定粗体；粗体与常规的宽度不同，markdown 换行必须用同一档量）。
+    pub fn measureTextStyled(self: *Context, s: []const u8, size: f32, bold: bool) t.Size {
+        return self.measure_fn(self.measure_ctx, s, size, bold);
     }
 
     // ------------------------------------------------------------ 容器
@@ -462,7 +492,13 @@ pub const Context = struct {
         if (f.absolute) {
             // 绝对面板保留给定矩形，不推进父容器游标；auto_h 时按内容补高度
             if (f.auto_h) {
-                if (f.node) |n| self.nodes[n].rect.h = f.cursor + f.pad * 2;
+                const h = f.cursor + f.pad * 2;
+                if (f.node) |n| {
+                    self.nodes[n].rect.h = h;
+                    if (f.size_key != 0) self.rememberSize(f.size_key, self.nodes[n].rect.w, h);
+                }
+            } else if (f.size_key != 0) {
+                if (f.node) |n| self.rememberSize(f.size_key, self.nodes[n].rect.w, self.nodes[n].rect.h);
             }
             return;
         }
@@ -522,6 +558,16 @@ pub const Context = struct {
 
     pub fn addText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {
         _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color });
+    }
+
+    /// 粗体文本（markdown 的 `**bold**` / 标题）：只有字重不同，其余同 `addText`。
+    pub fn addBoldText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {
+        _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color, .bold = true });
+    }
+
+    /// 富文本（markdown 的行内样式）：可同时指定粗体/斜体。
+    pub fn addRichText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color, bold: bool, italic: bool) void {
+        _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color, .bold = bold, .italic = italic });
     }
 
     /// 画位图（BGRA，顶行在前）。`radius > 0` 时做圆角/圆形遮罩（头像就是 radius = 边长/2）。
@@ -742,6 +788,43 @@ pub const Context = struct {
         }
     }
 
+    /// 上一帧回填的真实尺寸（没量过则 null）。`key` 为 0 恒返回 null。
+    /// 用途：浮层/弹框本帧结束才知道内容多高，下一帧用真值定位（不再靠 `estimate_h` 猜）。
+    pub fn knownSize(self: *Context, key: u64) ?t.Size {
+        if (key == 0) return null;
+        var i: usize = 0;
+        while (i < self.size_n) : (i += 1) {
+            if (self.sizes[i].id == key) {
+                self.sizes[i].used = self.time;
+                return .{ .w = self.sizes[i].w, .h = self.sizes[i].h };
+            }
+        }
+        return null;
+    }
+
+    /// 帧末回填尺寸（`PanelOpts.size_key` 会自动调；手动量过内容高度时也可直接用）。
+    /// 池满按**最久未使用**淘汰：不能静默丢弃，否则新浮层永远首帧估值（位置偏差无法自校正）。
+    pub fn rememberSize(self: *Context, key: u64, w: f32, h: f32) void {
+        if (key == 0) return;
+        var i: usize = 0;
+        while (i < self.size_n) : (i += 1) {
+            if (self.sizes[i].id == key) {
+                self.sizes[i] = .{ .id = key, .w = w, .h = h, .used = self.time };
+                return;
+            }
+        }
+        if (self.size_n < self.sizes.len) {
+            self.sizes[self.size_n] = .{ .id = key, .w = w, .h = h, .used = self.time };
+            self.size_n += 1;
+            return;
+        }
+        var oldest: usize = 0;
+        for (self.sizes, 0..) |s, k| {
+            if (s.used < self.sizes[oldest].used) oldest = k;
+        }
+        self.sizes[oldest] = .{ .id = key, .w = w, .h = h, .used = self.time };
+    }
+
     /// 绝对定位面板：节点矩形就是 rect，内部内容从 rect + pad 开始；不推进父容器游标。
     pub fn panel(self: *Context, rect: t.Rect, opts: PanelOpts) Scope {
         if (self.depth >= MAX_DEPTH) return .{ .ui = self };
@@ -765,6 +848,7 @@ pub const Context = struct {
             .gap = opts.gap,
             .absolute = true,
             .auto_h = opts.auto_height,
+            .size_key = opts.size_key,
         };
         self.depth += 1;
         return .{ .ui = self };
@@ -793,7 +877,7 @@ pub const Context = struct {
                     if (n.border_width > 0 and n.border.a > 0) self.pushBorder(n.rect, n.border_width, n.border, n.clip, n.layer);
                 },
                 .text => {
-                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer, .mono = n.mono } });
+                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer, .mono = n.mono, .bold = n.bold, .italic = n.italic } });
                 },
             }
         }
@@ -970,9 +1054,10 @@ fn advance(f: *Frame, main: f32, cross: f32) void {
     if (cross > f.cross) f.cross = cross;
 }
 
-fn defaultMeasure(_: ?*anyopaque, s: []const u8, size: f32) t.Size {
+fn defaultMeasure(_: ?*anyopaque, s: []const u8, size: f32, bold: bool) t.Size {
     const n: f32 = @floatFromInt(s.len);
-    return .{ .w = n * size * 0.55, .h = size * 1.35 };
+    const em: f32 = if (bold) 0.58 else 0.55;
+    return .{ .w = n * size * em, .h = size * 1.35 };
 }
 
 /// 裁剪求交：null 表示无裁剪；完全不相交返回 null。

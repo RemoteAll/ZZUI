@@ -124,10 +124,10 @@ pub const Backend = union(enum) {
         }
     }
 
-    pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {
+    pub fn measure(self: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         return switch (self.*) {
-            .win32 => |*b| b.measure(s, size_px),
-            .null_backend => |*b| b.measure(s, size_px),
+            .win32 => |*b| b.measure(s, size_px, bold),
+            .null_backend => |*b| b.measure(s, size_px, bold),
         };
     }
 

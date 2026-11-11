@@ -397,11 +397,16 @@ pub fn input(
 
 pub const DialogOpts = struct {
     width: f32 = 320,
-    height: f32 = 176,
+    /// null = 高度按内容（标题 + 消息换行 + 按钮行）：首帧用测量估值，
+    /// 从第二帧起用**上一帧真实高度**居中（`PanelOpts.size_key` 帧末回填）。
+    /// 显式给值 = 固定高度，按钮贴底右对齐（老行为）。
+    height: ?f32 = null,
     title: []const u8 = "",
     message: []const u8 = "",
     ok_label: []const u8 = "OK",
     cancel_label: []const u8 = "Cancel",
+    /// `height == null` 时区分尺寸池条目的键（同页面多个对话框填不同值）。
+    id: []const u8 = "",
 };
 
 pub const DialogResult = enum { none, ok, cancel };
@@ -412,33 +417,67 @@ pub fn dialog(ui: *core.Context, open: *bool, opts: DialogOpts) DialogResult {
     defer ov.end();
 
     const w = opts.width;
-    const h = opts.height;
+    const pad: f32 = 20;
+    const gap: f32 = 10;
+    const btn_h: f32 = 34;
+    const btn_w: f32 = 88;
+    // 首帧估值：标题行 + 消息按内容宽换行后的行高 + 间隙 + 按钮行。
+    // 第二帧起直接用上一帧量到的真值（消息长了两行也不会撑出卡片）。
+    var lines: [core.MAX_LINES][]const u8 = undefined;
+    const nl = core.wrapText(ui, opts.message, theme.font_body, w - pad * 2, &lines);
+    const line_h = blk: {
+        const m = ui.measureText(opts.message, theme.font_body);
+        break :blk if (m.h > 0) m.h else theme.font_body * 1.35;
+    };
+    const body_h = line_h * @as(f32, @floatFromInt(@max(nl, 1)));
+    const title_h = blk: {
+        const m = ui.measureText(opts.title, 18);
+        break :blk if (m.h > 0) m.h else 24;
+    };
+    const est_h = pad * 2 + title_h + gap + body_h + gap + btn_h;
+
+    const size_key = if (opts.height == null)
+        core.Context.idOf(opts.id) ^ core.Context.idOf(opts.title) ^ 0xD1A106
+    else
+        0;
+    const h = opts.height orelse (if (ui.knownSize(size_key)) |s| s.h else est_h);
     const x = (ui.width - w) / 2;
     const y = (ui.height - h) / 2;
     var card = ui.panel(.{ .x = x, .y = y, .w = w, .h = h }, .{
         .fill = theme.surface,
         .radius = 12,
         .border = theme.border,
-        .pad = 20,
-        .gap = 10,
+        .pad = pad,
+        .gap = gap,
+        .auto_height = opts.height == null,
+        .size_key = size_key,
     });
     defer card.end();
 
     _ = ui.textRun(opts.title, 18, theme.text);
     _ = ui.textRun(opts.message, theme.font_body, theme.secondary);
 
-    const btn_h: f32 = 34;
-    const btn_w: f32 = 88;
-    const by = y + h - 20 - btn_h;
-    const ok_x = x + w - 20 - btn_w;
-    const cancel_x = ok_x - 8 - btn_w;
+    // 固定高度：按钮贴底（老布局）；自动高度：按钮紧跟内容
+    var ok_rect: t.Rect = undefined;
+    var cancel_rect: t.Rect = undefined;
+    if (opts.height != null) {
+        const by = y + h - pad - btn_h;
+        const ok_x = x + w - pad - btn_w;
+        cancel_rect = .{ .x = ok_x - 8 - btn_w, .y = by, .w = btn_w, .h = btn_h };
+        ok_rect = .{ .x = ok_x, .y = by, .w = btn_w, .h = btn_h };
+    } else {
+        _ = ui.reserve(0, 8, false);
+        const row = ui.reserve(0, btn_h, true);
+        ok_rect = .{ .x = row.x + row.w - btn_w, .y = row.y, .w = btn_w, .h = btn_h };
+        cancel_rect = .{ .x = ok_rect.x - 8 - btn_w, .y = row.y, .w = btn_w, .h = btn_h };
+    }
 
     var result: DialogResult = .none;
-    if (buttonRect(ui, .{ .x = cancel_x, .y = by, .w = btn_w, .h = btn_h }, opts.cancel_label, .{})) {
+    if (buttonRect(ui, cancel_rect, opts.cancel_label, .{})) {
         open.* = false;
         result = .cancel;
     }
-    if (buttonRect(ui, .{ .x = ok_x, .y = by, .w = btn_w, .h = btn_h }, opts.ok_label, .{ .variant = .primary })) {
+    if (buttonRect(ui, ok_rect, opts.ok_label, .{ .variant = .primary })) {
         open.* = false;
         result = .ok;
     }

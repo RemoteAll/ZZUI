@@ -111,11 +111,16 @@ $galleryLimit = 335872
 # pickers 于 2026-11-11 新增媒体族（5 控件 + 渲染分层基础设施）后实测 241,152 B；
 # 门槛由 229,376 抬到 253,952（+5% 余量），依据已写进 docs/决策记录.md。
 $pickersLimit = 253952
+# docs 于 2026-11-11 新增（markdown + diff 两族，约 30 KB 代码）：不塞 gallery（实测塞进去会让
+# gallery 从 334,336 涨到 366,080，顶穿 335,872 门槛），单独出产物；实测 208,384 B，
+# 门槛 217,088 B（+4% 余量）。
+$docsLimit = 217088
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-gallery-x64.exe'; limit = $galleryLimit },
-    @{ path = 'zig-out/bin/zzui-pickers-x64.exe'; limit = $pickersLimit }
+    @{ path = 'zig-out/bin/zzui-pickers-x64.exe'; limit = $pickersLimit },
+    @{ path = 'zig-out/bin/zzui-docs-x64.exe'; limit = $docsLimit }
 )
 foreach ($e in $exes) {
     if (Test-Path $e.path) {
@@ -333,7 +338,65 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
     Skip "pickers" "zzui-pickers-x64.exe not found"
 }
 
-Write-Host "== 1.8 theme switching (--dark must repaint every token) =="
+Write-Host "== 1.8 docs example (markdown + diff, two pages) =="
+if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
+    $tmp5 = Join-Path $env:TEMP 'zzui-regression-docs'
+    if (-not (Test-Path $tmp5)) { New-Item -ItemType Directory -Path $tmp5 -Force | Out-Null }
+    Remove-Item (Join-Path $tmp5 'zzui-docs.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @('--once') $tmp5
+    Check "docs:once-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $db = Join-Path $tmp5 'zzui-docs.bmp'
+    if (Test-Path $db) {
+        $expect = 54 + 760 * 1000 * 4
+        Check "docs:once-size" ((Get-Item $db).Length -eq $expect) ("bytes=" + (Get-Item $db).Length + " expect=" + $expect)
+    } else {
+        Check "docs:once-size" $false "bmp not written"
+    }
+
+    # 页 0 = markdown（标题/列表/任务框/代码块/表格/引用）；页 1 = diff（红绿底 + 行号）
+    foreach ($pg in 0, 1) {
+        $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
+        Remove-Item $bmp -ErrorAction SilentlyContinue
+        $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
+        Check ("docs:page$pg-exit") ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+        if (Test-Path $bmp) {
+            $g = [IO.File]::ReadAllBytes($bmp)
+            $gw = [BitConverter]::ToInt32($g, 18)
+            $gh = [BitConverter]::ToInt32($g, 22)
+            $dark = 0
+            $redbg = 0
+            $greenbg = 0
+            $accent = 0
+            for ($y = 20; $y -lt [Math]::Min(900, $gh); $y += 2) {
+                for ($x = 20; $x -lt [Math]::Min(700, $gw); $x += 2) {
+                    $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                    $bb = [int]$g[$off]; $gg = [int]$g[$off+1]; $rr = [int]$g[$off+2]
+                    if ($rr -lt 100 -and $gg -lt 100 -and $bb -lt 100) { $dark++ }
+                    if (($rr - $gg) -gt 3 -and $rr -gt 200) { $redbg++ }
+                    if (($gg - $rr) -gt 3 -and $gg -gt 200) { $greenbg++ }
+                    if ($bb -gt 180 -and $rr -lt 120) { $accent++ }
+                }
+            }
+            # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200），门限单独给
+            $textGate = if ($pg -eq 0) { 400 } else { 120 }
+            Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
+            if ($pg -eq 0) {
+                # markdown：任务框（勾选的强调色块）+ 链接下划线
+                Check "docs:page0-accent" ($accent -gt 40) ("accent=" + $accent)
+            } else {
+                # diff：删除行淡红底、新增行淡绿底各要成片出现
+                Check "docs:page1-red" ($redbg -gt 400) ("redbg=" + $redbg)
+                Check "docs:page1-green" ($greenbg -gt 400) ("greenbg=" + $greenbg)
+            }
+        } else {
+            Check "docs:page$pg-text" $false "bmp not written"
+        }
+    }
+} else {
+    Skip "docs" "zzui-docs-x64.exe not found"
+}
+
+Write-Host "== 1.9 theme switching (--dark must repaint every token) =="
 if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     $tmp5 = Join-Path $env:TEMP 'zzui-regression-theme'
     if (-not (Test-Path $tmp5)) { New-Item -ItemType Directory -Path $tmp5 -Force | Out-Null }

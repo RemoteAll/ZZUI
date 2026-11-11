@@ -42,7 +42,7 @@ test "platform: null backend honours the size/scale/meter contract" {
     // 无窗口后端没有时间源：`now()` 恒 0（悬停计时依赖 `App` 覆写 ui.time）
     try std.testing.expectEqual(@as(f64, 0), b.now());
     // 估宽：0.55em×字符数，高 1.35em
-    const m = b.measure("abcd", 10);
+    const m = b.measure("abcd", 10, false);
     try std.testing.expectApproxEqAbs(@as(f32, 22), m.w, 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 13.5), m.h, 0.001);
     // 输入区可读写（App 每帧把 backend.input() 复制进 ui）

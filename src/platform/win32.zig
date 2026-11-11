@@ -229,9 +229,9 @@ pub const Backend = struct {
         _ = w.ReleaseDC(self.hwnd, wdc);
     }
 
-    pub fn measure(self: *Backend, s: []const u8, size_px: f32) t.Size {
+    pub fn measure(self: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
-        const font = self.fontFor(size_px, false) orelse return .{ .w = 0, .h = size_px * 1.35 };
+        const font = self.fontFor(size_px, false, bold, false) orelse return .{ .w = 0, .h = size_px * 1.35 };
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, s);
         const old = w.SelectObject(dc, font) orelse return .{ .w = 0, .h = size_px * 1.35 };
@@ -245,7 +245,7 @@ pub const Backend = struct {
     }
 
     fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {
-        const font = self.fontFor(c.size, c.mono) orelse return;
+        const font = self.fontFor(c.size, c.mono, c.bold, c.italic) orelse return;
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, c.text);
         const old = w.SelectObject(dc, font) orelse return;
@@ -270,15 +270,17 @@ pub const Backend = struct {
         _ = w.SelectObject(dc, old);
     }
 
-    fn fontFor(self: *Backend, size_px: f32, mono: bool) ?w.HFONT {
-        const weight: i32 = if (size_px >= 20) 600 else 400;
-        const key = size_px * 1000 + @as(f32, @floatFromInt(weight)) + (if (mono) @as(f32, 500_000) else 0);
+    fn fontFor(self: *Backend, size_px: f32, mono: bool, bold: bool, italic: bool) ?w.HFONT {
+        const weight: i32 = if (bold or size_px >= 20) 600 else 400;
+        const key = size_px * 1000 + @as(f32, @floatFromInt(weight)) +
+            (if (mono) @as(f32, 500_000) else 0) + (if (italic) @as(f32, 200_000) else 0);
         for (&self.fonts) |*slot| {
             if (slot.font != null and slot.key == key) return slot.font;
         }
         const height: i32 = -@as(i32, @intFromFloat(@round(size_px * self.dpi)));
         const face = if (mono) face_mono else face_ui;
-        const font = w.CreateFontW(height, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 0, 0, face);
+        const italic_flag: u32 = if (italic) 1 else 0;
+        const font = w.CreateFontW(height, 0, 0, 0, weight, italic_flag, 0, 0, 1, 0, 0, 0, 0, face);
         for (&self.fonts) |*slot| {
             if (slot.font == null) {
                 slot.* = .{ .key = key, .font = font };

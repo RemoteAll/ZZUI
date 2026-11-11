@@ -861,6 +861,72 @@ fn pageDock(ui: *zzui.core.Context, st: *State) void {
     zzui.dockspace.end(ui);
 }
 
+// ------------------------------------------------------------------ 页 13：文档（markdown + diff）
+
+const md_sample =
+    "# Release 2.4\n" ++
+    "\n" ++
+    "Renders **native content** every frame, *no copy kept*. Lists, tasks and code blocks work too.\n" ++
+    "\n" ++
+    "- [x] Tag the release\n" ++
+    "- [ ] Publish the notes\n" ++
+    "- Nested list:\n" ++
+    "  - `inline code`\n" ++
+    "  - ~~struck~~ text and a [link](https://example.com/notes)\n" ++
+    "\n" ++
+    "```zig\nconst MarkdownResult = struct { link: ?[]const u8 };\n```\n" ++
+    "\n" ++
+    "| key | value |\n" ++
+    "|-----|-------|\n" ++
+    "| size | 12 |\n" ++
+    "| mode | dark |\n" ++
+    "\n" ++
+    "> Quoted text keeps a rule on the left.\n" ++
+    "\n" ++
+    "---\n" ++
+    "\n" ++
+    "Last paragraph after the rule.\n";
+
+const diff_old =
+    "fn main() void {\n" ++
+    "    const x = 1;\n" ++
+    "    const y = 2;\n" ++
+    "    print(x + y);\n" ++
+    "}\n" ++
+    "\n" ++
+    "fn helper() void {\n" ++
+    "    return;\n" ++
+    "}\n" ++
+    "\n" ++
+    "fn tail() void {}\n";
+
+const diff_new =
+    "fn main() void {\n" ++
+    "    const x = 1;\n" ++
+    "    const y = 40;\n" ++
+    "    print(x + y);\n" ++
+    "    print(\"done\");\n" ++
+    "}\n" ++
+    "\n" ++
+    "fn helper() void {\n" ++
+    "    return;\n" ++
+    "}\n" ++
+    "\n" ++
+    "fn tail() void {}\n";
+
+fn pageDocs(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Diff (split; click a changed row to select it; unchanged runs fold)");
+    _ = zzui.diff.diffView(ui, "gal-diff", diff_old, diff_new, &st.diff_current, .{
+        .old_title = "before.zig",
+        .new_title = "after.zig",
+        .height = 190,
+    });
+
+    zzui.widgets.separator(ui);
+    zzui.extras.muted(ui, "Markdown (headings, lists, tasks, code, table, quote, rule)");
+    _ = zzui.markdown.markdown(ui, "gal-md", md_sample, .{});
+}
+
 // ------------------------------------------------------------------ 页面装配
 
 fn build(ui: *zzui.core.Context, st: *State) void {

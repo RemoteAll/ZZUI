@@ -28,6 +28,8 @@ test {
     _ = @import("tests_theme.zig");
     _ = @import("tests_anim.zig");
     _ = @import("tests_state.zig");
+    _ = @import("tests_markdown.zig");
+    _ = @import("tests_diff.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

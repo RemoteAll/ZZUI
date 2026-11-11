@@ -89,8 +89,10 @@ pub const PopoverOpts = struct {
     fill: ?t.Color = null,
     /// 打开时是否压暗页面（默认不压暗，只拦外部点击）。
     dim: ?t.Color = null,
-    /// 向上弹出（需要 `estimate_h` 才能定位）。
+    /// 向上弹出。
     above: bool = false,
+    /// **首帧**没有历史高度时的估值：从第二帧起一律用上一帧量到的真实高度定位
+    /// （`size_key` 帧末回填），所以内容几行都不会「先估错、再跳动」，只在首帧可能偏一点。
     estimate_h: f32 = 180,
 };
 
@@ -106,14 +108,17 @@ pub fn popoverBegin(ui: *core.Context, id: []const u8, anchor: t.Rect, open: *bo
     }
 
     const w = opts.width;
+    // 帧末回填尺寸 → 下一帧用真值定位（立即模式里的「帧末统一布局」）
+    const size_key = idOf(id, 0xB0B0_51FE);
+    const h = if (ui.knownSize(size_key)) |s| s.h else opts.estimate_h;
     var x = anchor.x;
     var y = anchor.y + anchor.h + opts.gap;
-    if (opts.above) y = anchor.y - opts.estimate_h - opts.gap;
-    if (y + opts.estimate_h > ui.height - 8 and !opts.above) y = anchor.y - opts.estimate_h - opts.gap;
+    if (opts.above) y = anchor.y - h - opts.gap;
+    if (y + h > ui.height - 8 and !opts.above) y = anchor.y - h - opts.gap;
     if (x + w > ui.width - 8) x = ui.width - w - 8;
     if (x < 8) x = 8;
     // 锚点可能在滚动视口之外：定位结果必须夹回窗口，否则面板会画到屏幕外
-    const max_y = ui.height - 8 - opts.estimate_h;
+    const max_y = ui.height - 8 - h;
     if (y > max_y) y = max_y;
     if (y < 8) y = 8;
 
@@ -124,6 +129,7 @@ pub fn popoverBegin(ui: *core.Context, id: []const u8, anchor: t.Rect, open: *bo
         .radius = opts.radius,
         .border = theme.border,
         .auto_height = true,
+        .size_key = size_key,
     });
     return true;
 }

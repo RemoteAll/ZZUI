@@ -69,3 +69,54 @@ test "state: focus pool overflow is observable" {
     try std.testing.expectEqual(core.MAX_FOCUS, ui.focus_curr_n);
     try std.testing.expect(ui.overflowed); // 溢出必须可见，不能静默截断
 }
+
+// 帧末回填尺寸（「帧末统一布局」在立即模式里的形态）：本帧画完才知道多高，
+// 下一帧才排得上。这里断言的是**顺序**：第一帧量、第二帧用。
+test "state: panel auto height is measured at frame end and reused next frame" {
+    var ui = core.Context{};
+    const key: u64 = 0x5EA1;
+    try std.testing.expect(ui.knownSize(key) == null); // 还没量过
+
+    ui.begin(400, 300);
+    {
+        var p = ui.panel(.{ .x = 10, .y = 10, .w = 200, .h = 0 }, .{
+            .pad = 8,
+            .auto_height = true,
+            .size_key = key,
+        });
+        _ = ui.reserve(0, 30, true);
+        _ = ui.reserve(0, 12, true);
+        p.end(); // 帧末：cursor = 30 + gap*1 + 12，pad*2 = 16
+    }
+    const s = ui.knownSize(key) orelse return error.NotRemembered;
+    try std.testing.expectApproxEqAbs(@as(f32, 200), s.w, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 42 + 16), s.h, 0.01);
+}
+
+test "state: popover places itself with last frame's real height" {
+    const overlay = @import("overlay.zig");
+    const types = @import("types.zig");
+    var ui = core.Context{};
+    var open = true;
+    const anchor = types.Rect{ .x = 20, .y = 230, .w = 60, .h = 20 }; // 靠近窗口底边，必须翻转上去
+
+    // 第一帧：没有历史高度，只能用 estimate_h = 40
+    ui.begin(300, 300);
+    if (overlay.popoverBegin(&ui, "pop", anchor, &open, .{ .width = 180, .estimate_h = 40 })) {
+        _ = ui.reserve(0, 10, true);
+        _ = ui.reserve(0, 10, true);
+        overlay.popoverEnd(&ui);
+    }
+    const first_y = ui.nodes[0].rect.y;
+    try std.testing.expectApproxEqAbs(@as(f32, 230 - 40 - 6), first_y, 0.01);
+
+    // 第二帧：用上一帧量到的真高（内容 10 + gap 8 + 10 = 28，加 pad 24 = 52）定位
+    ui.begin(300, 300);
+    if (overlay.popoverBegin(&ui, "pop", anchor, &open, .{ .width = 180, .estimate_h = 40 })) {
+        _ = ui.reserve(0, 10, true);
+        _ = ui.reserve(0, 10, true);
+        overlay.popoverEnd(&ui);
+    }
+    try std.testing.expectApproxEqAbs(@as(f32, 230 - 52 - 6), ui.nodes[0].rect.y, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 52), ui.nodes[0].rect.h, 0.01);
+}
