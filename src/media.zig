@@ -623,7 +623,7 @@ fn drawDigit(ui: *core.Context, cell: t.Rect, v: f32, lh: f32, size: f32, dw: f3
         if (@abs(vv - v) >= 1) continue;
         const wrapped = @mod(@mod(vv, 10.0) + 10.0, 10.0);
         const digit: u8 = @intFromFloat(wrapped);
-        const buf = [1]u8{ '0' + digit };
+        const buf = [1]u8{'0' + digit};
         const y = cell.y + (vv - v) * lh;
         ui.addText(.{ .x = cell.x + (cell.w - dw) / 2, .y = y, .w = dw, .h = lh }, ui.frameStr(&buf), size, color);
     }

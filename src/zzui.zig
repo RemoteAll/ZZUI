@@ -24,6 +24,7 @@ pub const pickers = @import("pickers.zig");
 pub const upload = @import("upload.zig");
 pub const photo = @import("photo.zig");
 pub const media = @import("media.zig");
+pub const image = @import("image.zig");
 pub const charts = @import("charts.zig");
 pub const chrome = @import("chrome.zig");
 pub const disclosure = @import("disclosure.zig");

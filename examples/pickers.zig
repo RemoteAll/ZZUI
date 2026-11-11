@@ -169,6 +169,34 @@ fn pageGraphs(ui: *zzui.core.Context, st: *State) void {
     zzui.widgets.textInt(ui, "strokes = ", @intCast(pts.strokes), "");
 }
 
+/// 一张 4×4、24bpp 的 BMP，**在编译期按字节布局拼出来**（不往仓库塞二进制样例）。
+/// 用来演示 `image.decodeBmp`：解码结果的像素缓冲由调用方持有。
+const demo_bmp = blk: {
+    const w: usize = 4;
+    const h: usize = 4;
+    const row: usize = (w * 3 + 3) / 4 * 4;
+    var b: [54 + row * h]u8 = @splat(0);
+    b[0] = 'B';
+    b[1] = 'M';
+    b[10] = 54; // 像素偏移
+    b[14] = 40; // DIB 大小
+    b[18] = w; // 宽
+    b[22] = h; // 高（正 = 自下而上）
+    b[26] = 1; // planes
+    b[28] = 24; // bpp
+    var y: usize = 0;
+    while (y < h) : (y += 1) {
+        var x: usize = 0;
+        while (x < w) : (x += 1) {
+            const i = 54 + y * row + x * 3;
+            b[i] = @intCast(60 + x * 50); // B
+            b[i + 1] = @intCast(40 + y * 60); // G
+            b[i + 2] = 210; // R
+        }
+    }
+    break :blk b;
+};
+
 fn pageUpload(ui: *zzui.core.Context, st: *State) void {
     zzui.extras.muted(ui, "Avatar upload (click the camera badge; image pixels come from the caller)");
     {
@@ -200,6 +228,18 @@ fn pageUpload(ui: *zzui.core.Context, st: *State) void {
 }
 
 fn pagePhotos(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Decoded in memory (image.decodeBmp → BGRA; the caller owns the pixel buffer)");
+    {
+        var buf: [4 * 4 * 4]u8 = @splat(0);
+        if (zzui.image.decodeBmp(&demo_bmp, &buf, .{})) |img| {
+            const r = ui.reserve(72, 72, false);
+            ui.addImage(r, img.src(), 8);
+            ui.addText(.{ .x = r.x + 80, .y = r.y + 26, .w = 200, .h = 20 }, "4x4 BMP decoded", zzui.theme.font_small, zzui.theme.secondary);
+        } else |_| {
+            zzui.extras.muted(ui, "BMP decode failed");
+        }
+    }
+
     zzui.extras.muted(ui, "Image viewer (wheel to zoom at the cursor, drag to pan, toolbar to step)");
     _ = zzui.photo.imageViewer(ui, "pv", avatar_src, &st.view, &st.vdrag, .{
         .height = 260,
