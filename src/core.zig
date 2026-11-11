@@ -99,6 +99,9 @@ pub const MAX_OVERLAYS = 192;
 pub const MAX_TEXT_POOL = 8192;
 pub const MAX_SCROLLS = 16;
 pub const MAX_TIPS = 16;
+/// 动效轨道池（`anim.zig` 用）：按 id 存「当前值」，跨帧保留。
+/// 16 条够一屏的悬停/选中过渡用；满了就按**最久未使用**淘汰（不会无限增长）。
+pub const MAX_TRACKS = 16;
 /// 位图指令独立通道（不进 `Command` 联合体，原因见 `ImageCmd` 注释）。
 /// 8 项是实测过的够用量：一屏里的头像/缩略图场景 3~5 个，
 /// 每多一项都会让 `Context` 变大（结构体越大，`App` 的拷贝代码越多）。
@@ -113,6 +116,14 @@ const ScrollState = struct {
 const TipState = struct {
     id: u64 = 0,
     start: f64 = 0,
+};
+
+/// 一条动画轨道：`value` 是当前插值值（一般 0..1），`last` 用于算 dt，`used` 用于淘汰。
+pub const AnimTrack = struct {
+    id: u64 = 0,
+    value: f32 = 0,
+    last: f64 = 0,
+    used: f64 = 0,
 };
 
 const Frame = struct {
@@ -308,9 +319,15 @@ pub const Context = struct {
     wheel_used: bool = false,
     /// 本帧是否发生过容量溢出（节点/指令/线段/命中）——静默截断会让界面「莫名少画」，必须能查。
     overflowed: bool = false,
+    /// 本帧是否还需要继续出帧（有动画在跑 / 有定时器在等）。
+    /// `App.next` 用它做**空闲节流**：不置位且没按住鼠标时，后端直接阻塞到有输入。
+    need_frame: bool = false,
     /// 悬停开始时间（tooltip 用），跨帧保留。
     tips: [MAX_TIPS]TipState = @splat(.{}),
     tip_n: usize = 0,
+    /// 动画轨道（`anim.zig`），跨帧保留、有界。
+    tracks: [MAX_TRACKS]AnimTrack = @splat(.{}),
+    track_n: usize = 0,
     /// 本帧时间（秒），由 App 每帧写入。
     time: f64 = 0,
     /// 帧内字符串池：控件里拼出来的文本（如数字）要拷进来，否则节点会持有失效的栈切片。
@@ -342,6 +359,7 @@ pub const Context = struct {
         self.overlay_backdrop_clicked = false;
         self.max_layer = 0;
         self.overflowed = false;
+        self.need_frame = false;
         self.clip = null;
         self.wheel_target = self.wheel_target_next;
         self.wheel_target_next = 0;
@@ -855,6 +873,12 @@ pub const Context = struct {
     pub fn scrollTo(self: *Context, id: []const u8, offset: f32) void {
         const st = self.scrollState(Context.idOf(id));
         st.offset = if (offset > 0) offset else 0;
+    }
+
+    /// 声明「本帧之后还需要继续出帧」（动画在跑、定时器在等）。
+    /// 不调它、也没按住鼠标时，`App.next` 会让后端**阻塞到有输入**，不再空转烧 CPU。
+    pub fn requestFrame(self: *Context) void {
+        self.need_frame = true;
     }
 
     /// 滚动视口：滚轮滚动、子节点裁剪到视口，结束时画滚动条。

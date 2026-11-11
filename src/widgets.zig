@@ -3,6 +3,7 @@
 const std = @import("std");
 const core = @import("core.zig");
 const theme = @import("theme.zig");
+const anim = @import("anim.zig");
 const t = @import("types.zig");
 
 /// 1px 圆角边框：外圈画边框色、内圈画填充色（比 4 条矩形拼边框更圆顺）。
@@ -73,13 +74,13 @@ pub fn buttonRect(ui: *core.Context, rect: t.Rect, label: []const u8, opts: Butt
 
     switch (opts.variant) {
         .primary => {
-            var fill = theme.accent;
-            if (it.pressed and it.hover) fill = theme.accent_active;
-            ui.addBox(rect, .{ .fill = fill, .radius = theme.radius_control });
+            // 按下时向 accent_active 过渡（动效只碰颜色，不动几何）
+            const a = anim.step(ui, id ^ 0x9E37, if (it.pressed and it.hover) 1 else 0, anim.rate_toggle);
+            ui.addBox(rect, .{ .fill = anim.mix(theme.accent, theme.accent_active, a), .radius = theme.radius_control });
         },
         .secondary => {
-            var fill = theme.surface;
-            if (it.hover) fill = theme.track;
+            const h = anim.hover(ui, id, it.hover);
+            var fill = anim.mix(theme.surface, theme.track, h);
             if (it.pressed and it.hover) fill = theme.border;
             ringBox(ui, rect, theme.radius_control, fill, theme.border);
         },
@@ -111,13 +112,16 @@ pub fn controlSwitch(ui: *core.Context, label: []const u8, value: *bool) void {
     ui.addText(.{ .x = lr.x, .y = lr.y + (lr.h - m.h) / 2, .w = m.w, .h = m.h }, label, label_size, theme.text);
 
     const tr = ui.reserve(track_w, track_h, false);
-    const it = ui.interactEx(core.Context.idOf(label) ^ 0x51ED270B, tr, true);
+    const sid = core.Context.idOf(label) ^ 0x51ED270B;
+    const it = ui.interactEx(sid, tr, true);
     if (it.clicked or it.activated) value.* = !value.*;
 
     const on = value.*;
-    ui.addBox(tr, .{ .fill = if (on) theme.accent else theme.track, .radius = theme.radius_pill });
+    // 开/关用同一条轨道：轨道色、滑块位置一起插值（命中矩形不变）
+    const k = anim.toggle(ui, sid ^ 0x5EA1, on);
+    ui.addBox(tr, .{ .fill = anim.mix(theme.track, theme.accent, k), .radius = theme.radius_pill });
     const knob_d: f32 = 18;
-    const kx = if (on) tr.x + tr.w - knob_d - 3 else tr.x + 3;
+    const kx = anim.lerp(tr.x + 3, tr.x + tr.w - knob_d - 3, k);
     ui.addBox(.{ .x = kx, .y = tr.y + 3, .w = knob_d, .h = knob_d }, .{
         .fill = theme.bg,
         .radius = knob_d / 2,
@@ -142,12 +146,18 @@ pub fn checkbox(ui: *core.Context, label: []const u8, value: *bool) void {
         ui.addBox(.{ .x = bx - 3, .y = by - 3, .w = box + 6, .h = box + 6 }, .{ .fill = theme.accent, .radius = 7 });
         ui.addBox(.{ .x = bx - 2, .y = by - 2, .w = box + 4, .h = box + 4 }, .{ .fill = theme.bg, .radius = 6 });
     }
-    if (value.*) {
-        ui.addBox(.{ .x = bx, .y = by, .w = box, .h = box }, .{ .fill = theme.accent, .radius = 4 });
-        ui.addOverlayLine(.{ .x = bx + 4.5, .y = by + 9.0 }, .{ .x = bx + 7.5, .y = by + 12.5 }, 2, theme.accent_text);
-        ui.addOverlayLine(.{ .x = bx + 7.5, .y = by + 12.5 }, .{ .x = bx + 13.5, .y = by + 5.5 }, 2, theme.accent_text);
-    } else {
-        ringBox(ui, .{ .x = bx, .y = by, .w = box, .h = box }, 4, theme.bg, theme.border);
+    {
+        const k = anim.toggle(ui, core.Context.idOf(label) ^ 0x1B87, value.*);
+        ui.addBox(.{ .x = bx, .y = by, .w = box, .h = box }, .{
+            .fill = anim.mix(theme.bg, theme.accent, k),
+            .radius = 4,
+            .border = anim.mix(theme.border, theme.accent, k),
+        });
+        if (k > 0.01) {
+            const tick = theme.withAlpha(theme.accent_text, @intFromFloat(255.0 * k));
+            ui.addOverlayLine(.{ .x = bx + 4.5, .y = by + 9.0 }, .{ .x = bx + 7.5, .y = by + 12.5 }, 2, tick);
+            ui.addOverlayLine(.{ .x = bx + 7.5, .y = by + 12.5 }, .{ .x = bx + 13.5, .y = by + 5.5 }, 2, tick);
+        }
     }
     ui.addText(.{ .x = bx + box + gap, .y = rect.y + (h - m.h) / 2, .w = m.w, .h = m.h }, label, theme.font_body, theme.text);
 }
@@ -167,15 +177,20 @@ pub fn radio(ui: *core.Context, label: []const u8, value: *u32, this_value: u32)
         ui.addBox(.{ .x = cx - 3, .y = cy - 3, .w = d + 6, .h = d + 6 }, .{ .fill = theme.accent, .radius = (d + 6) / 2 });
         ui.addBox(.{ .x = cx - 2, .y = cy - 2, .w = d + 4, .h = d + 4 }, .{ .fill = theme.bg, .radius = (d + 4) / 2 });
     }
-    if (value.* == this_value) {
-        ui.addBox(.{ .x = cx, .y = cy, .w = d, .h = d }, .{ .fill = theme.accent, .radius = d / 2 });
-        const dot: f32 = 8;
-        ui.addBox(.{ .x = cx + (d - dot) / 2, .y = cy + (d - dot) / 2, .w = dot, .h = dot }, .{
-            .fill = theme.bg,
-            .radius = dot / 2,
+    {
+        const k = anim.toggle(ui, core.Context.idOf(label) ^ 0xCC9E ^ @as(u64, this_value), value.* == this_value);
+        ui.addBox(.{ .x = cx, .y = cy, .w = d, .h = d }, .{
+            .fill = anim.mix(theme.bg, theme.accent, k),
+            .radius = d / 2,
+            .border = anim.mix(theme.border, theme.accent, k),
         });
-    } else {
-        ringBox(ui, .{ .x = cx, .y = cy, .w = d, .h = d }, d / 2, theme.bg, theme.border);
+        if (k > 0.01) {
+            const dot: f32 = 8;
+            ui.addBox(.{ .x = cx + (d - dot) / 2, .y = cy + (d - dot) / 2, .w = dot, .h = dot }, .{
+                .fill = theme.withAlpha(theme.bg, @intFromFloat(255.0 * k)),
+                .radius = dot / 2,
+            });
+        }
     }
     ui.addText(.{ .x = cx + d + gap, .y = rect.y + (h - m.h) / 2, .w = m.w, .h = m.h }, label, theme.font_body, theme.text);
 }
@@ -499,7 +514,10 @@ pub fn tooltip(ui: *core.Context, id: []const u8, anchor: t.Rect, label: []const
         return;
     }
     const start = ui.hoverStart(hash);
-    if (ui.time - start < delay) return;
+    if (ui.time - start < delay) {
+        ui.requestFrame(); // 等延迟：不出帧就永远等不到
+        return;
+    }
 
     const m = ui.measureText(label, theme.font_small);
     const w = m.w + 16;

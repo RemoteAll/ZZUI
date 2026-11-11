@@ -237,6 +237,7 @@ pub fn confirmButton(
     opts: ConfirmButtonOpts,
 ) bool {
     if (state.armed and ui.time - state.since > opts.timeout) state.armed = false;
+    if (state.armed) ui.requestFrame(); // 计时中：要持续出帧才能自动解除
 
     const text = if (state.armed) opts.confirm_label else label;
     const m = ui.measureText(text, theme.font_body);

@@ -507,6 +507,17 @@ pub extern "user32" fn DefWindowProcW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lPa
 pub extern "user32" fn ShowWindow(hWnd: HWND, nCmdShow: i32) callconv(.winapi) BOOL;
 pub extern "user32" fn UpdateWindow(hWnd: HWND) callconv(.winapi) BOOL;
 pub extern "user32" fn GetMessageW(lpMsg: *MSG, hWnd: ?HWND, wMsgFilterMin: UINT, wMsgFilterMax: UINT) callconv(.winapi) BOOL;
+/// 空闲等待：等到「有消息」或超时（`QS_ALLINPUT` = 键鼠/重绘/定时器等全部输入类消息）。
+/// `App.next` 在没有动画时用它替代忙等，让 CPU 真正闲下来。
+pub extern "user32" fn MsgWaitForMultipleObjectsEx(
+    nCount: DWORD,
+    pHandles: ?*const HANDLE,
+    dwMilliseconds: DWORD,
+    dwWakeMask: DWORD,
+    dwFlags: DWORD,
+) callconv(.winapi) DWORD;
+pub const QS_ALLINPUT: DWORD = 0x04FF;
+pub const MWMO_INPUTAVAILABLE: DWORD = 0x0004;
 pub extern "user32" fn TranslateMessage(lpMsg: *const MSG) callconv(.winapi) BOOL;
 pub extern "user32" fn DispatchMessageW(lpMsg: *const MSG) callconv(.winapi) LRESULT;
 pub extern "user32" fn PostQuitMessage(nExitCode: i32) callconv(.winapi) void;

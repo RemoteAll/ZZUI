@@ -55,6 +55,9 @@ pub const Backend = struct {
         return 1;
     }
 
+    /// 无窗口后端没有消息队列：`--once` / 测试都是同步出帧，这里只需占位满足契约。
+    pub fn idle(_: *Backend, _: u32) void {}
+
     pub fn now(_: *Backend) f64 {
         return 0;
     }

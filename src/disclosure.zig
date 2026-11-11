@@ -491,7 +491,10 @@ pub fn hoverCardBegin(
         return false;
     }
     if (state.start < 0) state.start = ui.time;
-    if (ui.time - state.start < opts.delay) return false;
+    if (ui.time - state.start < opts.delay) {
+        ui.requestFrame(); // 等延迟：不出帧就永远等不到
+        return false;
+    }
 
     _ = ui.beginOverlay(.{ .dim = null, .hit = false });
     const est_h: f32 = 96;

@@ -3,6 +3,7 @@
 const std = @import("std");
 const core = @import("core.zig");
 const theme = @import("theme.zig");
+const anim = @import("anim.zig");
 const widgets = @import("widgets.zig");
 const num = @import("num.zig");
 const t = @import("types.zig");
@@ -76,9 +77,13 @@ pub fn tabsEx(ui: *core.Context, id: []const u8, labels: []const []const u8, act
         const it = ui.interactEx(pairId(id, 0x7AB5 +% i), r, true);
         if (it.clicked or it.activated) active.* = i;
         const on = active.* == i;
-        if (!on and it.hover) ui.addBox(r, .{ .fill = theme.surface, .radius = 6 });
+        const hid = pairId(id, 0x7AB5 +% i);
+        // 悬停底淡入、选中下划线淡入（fixture 里第一帧就到位 -> 截图像素不受影响）
+        const hv = anim.hover(ui, hid ^ 0x7001, it.hover);
+        if (!on and hv > 0.01) ui.addBox(r, .{ .fill = theme.withAlpha(theme.surface, @intFromFloat(255.0 * hv)), .radius = 6 });
         ui.addText(.{ .x = r.x + (r.w - m.w) / 2, .y = r.y + (h - m.h) / 2 - 1, .w = m.w, .h = m.h }, label, theme.font_body, if (on) theme.text else theme.secondary);
-        if (on) ui.addBox(.{ .x = r.x, .y = r.y + h - 2, .w = r.w, .h = 2 }, .{ .fill = theme.accent });
+        const on_k = anim.toggle(ui, hid ^ 0x7002, on);
+        if (on_k > 0.01) ui.addBox(.{ .x = r.x, .y = r.y + h - 2, .w = r.w, .h = 2 }, .{ .fill = theme.withAlpha(theme.accent, @intFromFloat(255.0 * on_k)) });
         x += w + opts.gap;
     }
 }
@@ -95,10 +100,11 @@ pub fn segmented(ui: *core.Context, id: []const u8, labels: []const []const u8, 
         const it = ui.interactEx(pairId(id, 0x5E9 + i), r, true);
         if (it.clicked or it.activated) active.* = i;
         const on = active.* == i;
+        const hv = anim.hover(ui, pairId(id, 0x5E9 + i) ^ 0x7003, it.hover);
         if (on) {
             ui.addBox(r, .{ .fill = theme.bg, .radius = 7, .border = theme.border });
-        } else if (it.hover) {
-            ui.addBox(r, .{ .fill = theme.track, .radius = 7 });
+        } else if (hv > 0.01) {
+            ui.addBox(r, .{ .fill = theme.withAlpha(theme.track, @intFromFloat(255.0 * hv)), .radius = 7 });
         }
         ui.addText(.{ .x = r.x + (r.w - m.w) / 2, .y = r.y + (h - m.h) / 2, .w = m.w, .h = m.h }, label, theme.font_small, if (on) theme.text else theme.secondary);
     }

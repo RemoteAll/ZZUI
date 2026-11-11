@@ -270,6 +270,9 @@ pub fn carousel(
     }
     if (!st.dragging) st.pos = approach(st.pos, @floatFromInt(st.index), dt, 16);
     if (@abs(st.pos - @as(f32, @floatFromInt(st.index))) < 0.001) st.pos = @floatFromInt(st.index);
+    // 吸附没结束 / 开了自动轮播 -> 必须继续出帧（否则空闲节流后停在半路）
+    if (st.pos != @as(f32, @floatFromInt(st.index))) ui.requestFrame();
+    if (opts.auto_advance > 0 and count > 1) ui.requestFrame();
 
     const old_clip = pushClip(ui, view);
     ui.addBox(view, .{ .fill = theme.surface, .radius = theme.radius_control });
@@ -526,6 +529,7 @@ pub fn cardStack(
         st.y = approach(st.y, 0, dt, 18);
     }
     st.promote = approach(st.promote, 0, dt, 14);
+    if (st.dragging or st.flying or st.x != 0 or st.y != 0 or st.promote != 0) ui.requestFrame();
 
     const old_clip = pushClip(ui, base);
     return .{ .ui = ui, .base = base, .st = st, .visible = visible, .result = result, .old_clip = old_clip };
@@ -603,6 +607,7 @@ pub fn counter(ui: *core.Context, id_str: []const u8, value: f64, st: *CounterSt
             if (t1 - cur > 5) t1 -= 10;
             if (cur - t1 > 5) t1 += 10;
             sp.* = approach(cur, t1, dt, 14);
+            if (sp.* != t1) ui.requestFrame();
             drawDigit(ui, t.Rect{ .x = x, .y = row.y, .w = dw, .h = lh }, sp.*, lh, size, dw, color);
             x += dw;
         } else {
@@ -731,6 +736,7 @@ pub fn ticker(ui: *core.Context, id_str: []const u8, items: []const TickerItem, 
     if (!it.hover) {
         st.off += dt * (if (opts.speed > 0) opts.speed else 40);
         while (st.off >= set_w) st.off -= set_w;
+        ui.requestFrame(); // 滚动中：靠这个标志才不会被空闲节流冻住
     }
 
     if (opts.show_panel) ui.addBox(rect, .{ .fill = theme.surface, .radius = 6 });

@@ -20,7 +20,7 @@ pub const Platform = enum { win32, null_backend };
 const backend_methods = [_][]const u8{
     "deinit",      "poll",    "size",        "scale",
     "now",         "pixels",  "present",     "drawTextLayer",
-    "saveSurface", "measure", "droppedFile",
+    "saveSurface", "measure", "droppedFile", "idle",
 };
 
 fn assertBackendContract(comptime T: type) void {
@@ -86,6 +86,14 @@ pub const Backend = union(enum) {
             .win32 => |*b| b.scale(),
             .null_backend => |*b| b.scale(),
         };
+    }
+
+    /// 空闲：阻塞到有输入或超时（`null` 后端是空实现）。见 `App.next` 的空闲节流。
+    pub fn idle(self: *Backend, ms: u32) void {
+        switch (self.*) {
+            .win32 => |*b| b.idle(ms),
+            .null_backend => |*b| b.idle(ms),
+        }
     }
 
     pub fn now(self: *Backend) f64 {

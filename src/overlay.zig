@@ -47,6 +47,8 @@ pub fn toast(ui: *core.Context, id: []const u8, label: []const u8, open: *bool, 
         return false;
     }
     if (since.* < 0) since.* = ui.time;
+    // 有 ttl 就要持续出帧，否则空闲节流后它永远不会自己消失
+    if (opts.ttl > 0) ui.requestFrame();
     if (opts.ttl > 0 and ui.time - since.* >= opts.ttl) {
         open.* = false;
         since.* = -1;

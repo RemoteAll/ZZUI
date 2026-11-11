@@ -24,6 +24,7 @@ pub const pickers = @import("pickers.zig");
 pub const upload = @import("upload.zig");
 pub const photo = @import("photo.zig");
 pub const media = @import("media.zig");
+pub const anim = @import("anim.zig");
 pub const image = @import("image.zig");
 pub const charts = @import("charts.zig");
 pub const chrome = @import("chrome.zig");
@@ -56,13 +57,17 @@ pub const App = struct {
         // 其他平台返回**明确的运行时错误**（而不是编译不过或静默出空窗）。
         // 新增后端时在这里加一个分支，并在 `platform.zig` 的联合体里加成员。
         if (comptime @import("builtin").os.tag == .windows) {
-            return .{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height, desc.show) };
+            var app = App{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height, desc.show) };
+            app.ui.need_frame = true; // 首帧不要被空闲节流挡住
+            return app;
         }
         return error.PlatformNotImplemented;
     }
 
     pub fn initHeadless(width: u32, height: u32) !App {
-        return .{ .backend = try platform.Backend.initNull(width, height) };
+        var app = App{ .backend = try platform.Backend.initNull(width, height) };
+        app.ui.need_frame = true; // 首帧不要被空闲节流挡住
+        return app;
     }
 
     pub fn deinit(self: *App) void {
@@ -70,7 +75,12 @@ pub const App = struct {
     }
 
     /// 处理事件并开始一帧；返回 false 表示窗口已关闭。
+    ///
+    /// **空闲节流**：上一帧没有要求继续出帧（无动画、无定时器在等）且没按住鼠标时，
+    /// 先把线程**阻塞到有输入**再轮询消息队列 —— 不再每秒重建上千次整个界面。
+    /// 有输入会立刻唤醒（`MsgWaitForMultipleObjectsEx`），手感不变。
     pub fn next(self: *App) bool {
+        if (!self.ui.need_frame and !self.ui.input.down) self.backend.idle(50);
         if (!self.backend.poll()) return false;
         const sz = self.backend.size();
         self.ui.time = self.backend.now();

@@ -379,6 +379,7 @@ pub fn levelMeter(
             if (r >= state.peaks[i]) {
                 state.peaks[i] = r;
                 state.hold_until[i] = ui.time + opts.hold;
+            ui.requestFrame(); // 峰值保持窗口内要持续出帧
             } else if (ui.time > state.hold_until[i]) {
                 state.peaks[i] = r;
             }

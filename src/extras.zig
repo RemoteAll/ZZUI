@@ -148,6 +148,8 @@ pub fn progressRing(ui: *core.Context, value: f32, size: f32) void {
 
 /// 加载指示器：随时间旋转的四分之一圆（无动画时是一段固定弧）。
 pub fn spinner(ui: *core.Context, size: f32) void {
+    // 相位来自帧时间：必须持续出帧，否则转子会停住
+    ui.requestFrame();
     const r = ui.reserve(size, size, false);
     const cx = r.x + size / 2;
     const cy = r.y + size / 2;

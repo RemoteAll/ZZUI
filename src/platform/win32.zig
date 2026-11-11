@@ -112,8 +112,7 @@ pub const Backend = struct {
     }
 
     pub fn poll(self: *Backend) bool {
-        var msg: w.MSG = undefined;
-        while (w.PeekMessageW(&msg, null, 0, 0, w.PM_REMOVE) != 0) {
+        var msg: w.MSG = undefined;        while (w.PeekMessageW(&msg, null, 0, 0, w.PM_REMOVE) != 0) {
             if (msg.message == WM_QUIT) return false;
             _ = w.TranslateMessage(&msg);
             _ = w.DispatchMessageW(&msg);
@@ -176,6 +175,13 @@ pub const Backend = struct {
 
     pub fn scale(self: *Backend) f32 {
         return self.dpi;
+    }
+
+    /// 空闲：**阻塞**到有消息（按键 / 鼠标 / 重绘…）或超时。
+    /// 由 `App.next` 在「没有动画在跑、也没按住鼠标」时调用，避免主循环空转烧 CPU。
+    /// 用 `MsgWaitForMultipleObjectsEx` 而不是 `Sleep`：**有输入会立即返回**，手感不变。
+    pub fn idle(_: *Backend, ms: u32) void {
+        _ = w.MsgWaitForMultipleObjectsEx(0, null, ms, w.QS_ALLINPUT, 0);
     }
 
     pub fn now(_: *Backend) f64 {
