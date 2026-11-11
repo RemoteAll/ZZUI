@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -147,6 +147,16 @@ const State = struct {
     gr_topdown: bool = false,
     gr_last: [64]u8 = @splat(0),
     gr_last_len: usize = 0,
+    /// AI 界面族（推理折叠 / 工具调用 / 计划 / 回复操作 / 模型 / 输入框 / 语音球）
+    ai_rz: zzui.ai.ReasoningState = .{},
+    ai_tc: [2]zzui.ai.ToolCallState = .{ .{}, .{} },
+    ai_vote: i8 = 0,
+    ai_mp: zzui.ai.ModelPickerState = .{},
+    ai_model: usize = 0,
+    ai_cmp: zzui.ai.ComposerState = .{},
+    ai_voice: zzui.ai.VoiceState = .idle,
+    ai_last: [80]u8 = @splat(0),
+    ai_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -595,6 +605,82 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             }
             recents.end();
         }
+    } else if (st.page == 14) {
+        zzui.extras.muted(ui, "AI surfaces: reasoning fold, tool calls, plan rail, sources + inline citations, context ring, response actions, suggestions, model picker, composer and a voice orb");
+        _ = zzui.ai.reasoningBegin(ui, "docs-rz", &st.ai_rz, .{ .seconds = 14 });
+        zzui.widgets.secondary(ui, "The plan below is derived from the tool results, so every step can point at the call that produced it.");
+        zzui.ai.reasoningEnd(ui, &st.ai_rz);
+        zzui.ai.toolCall(ui, "docs-tc0", &st.ai_tc[0], "web.search", .{
+            .status = .done,
+            .detail = "5 results",
+            .input = "{\"q\":\"zig immediate mode ui\"}",
+            .output = "{\"hits\":5,\"top\":\"ziglang.org\"}",
+            .seconds = 3,
+        });
+        zzui.ai.toolCall(ui, "docs-tc1", &st.ai_tc[1], "repo.read", .{ .status = .running, .detail = "src/ai.zig", .seconds = 1 });
+        _ = zzui.ai.agentPlan(ui, "docs-plan", ai_plan[0..], .{ .title = "Port cui_ai.c" });
+        zzui.ai.agentStatus(ui, "Drafting the AI page", .{ .status = .running, .seconds = 42 });
+        zzui.widgets.separator(ui);
+        {
+            var row = ui.row(.{ .gap = 14 });
+            zzui.ai.contextMeter(ui, "docs-ctx", .{ .used = 96_400, .limit = 128_000 });
+            const flags = zzui.ai.responseActions(ui, "docs-ra", &st.ai_vote, .{});
+            if (flags != 0) {
+                var nb: [40]u8 = undefined;
+                const msg = std.fmt.bufPrint(nb[0..], "response actions = {d}, vote = {d}", .{ flags, st.ai_vote }) catch "actions";
+                @memcpy(st.ai_last[0..msg.len], msg);
+                st.ai_last_len = msg.len;
+            }
+            row.end();
+        }
+        {
+            var row = ui.row(.{ .gap = 6 });
+            zzui.widgets.secondary(ui, "Immediate mode keeps the state in your own structs");
+            _ = zzui.ai.citation(ui, 1, ai_sources[0]);
+            _ = zzui.ai.citation(ui, 2, ai_sources[1]);
+            row.end();
+        }
+        const picked = zzui.ai.sourceList(ui, "docs-src", ai_sources[0..]);
+        if (picked >= 0) {
+            const n = @min(ai_sources[@intCast(picked)].title.len, st.ai_last.len);
+            @memcpy(st.ai_last[0..n], ai_sources[@intCast(picked)].title[0..n]);
+            st.ai_last_len = n;
+        }
+        const sugg = zzui.ai.promptSuggestions(ui, "docs-sugg", ai_suggestions[0..], 2);
+        if (sugg >= 0) {
+            const n = @min(ai_suggestions[@intCast(sugg)].title.len, st.ai_last.len);
+            @memcpy(st.ai_last[0..n], ai_suggestions[@intCast(sugg)].title[0..n]);
+            st.ai_last_len = n;
+        }
+        zzui.widgets.separator(ui);
+        {
+            var row = ui.row(.{ .gap = 12 });
+            _ = zzui.ai.modelPicker(ui, "docs-mp", &st.ai_mp, ai_models[0..], &st.ai_model, false);
+            const orb_hit = zzui.ai.voiceOrb(ui, "docs-orb", st.ai_voice, 0.65, 56);
+            if (orb_hit) {
+                st.ai_voice = switch (st.ai_voice) {
+                    .idle => .listening,
+                    .listening => .thinking,
+                    .thinking => .speaking,
+                    .speaking => .idle,
+                };
+                const msg = "voice orb clicked";
+                @memcpy(st.ai_last[0..msg.len], msg);
+                st.ai_last_len = msg.len;
+            }
+            row.end();
+        }
+        const cflags = zzui.ai.chatComposer(ui, "docs-cmp", &st.ai_cmp, ai_models[0..], &st.ai_model, &st.ai_mp, .{
+            .attachments = ai_attach[0..],
+            .busy = st.ai_voice == .thinking,
+        });
+        if (cflags != 0) {
+            var nb: [40]u8 = undefined;
+            const msg = std.fmt.bufPrint(nb[0..], "composer flags = {d}", .{cflags}) catch "composer";
+            @memcpy(st.ai_last[0..msg.len], msg);
+            st.ai_last_len = msg.len;
+        }
+        if (st.ai_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.ai_last[0..st.ai_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -670,6 +756,32 @@ const nd_node_data = [_]NdNode{
     .{ .id = 4, .x = 24, .y = 230, .title = "Output", .in_pin = 41, .out_pin = 0 },
 };
 
+const ai_plan = [_]zzui.ai.PlanStep{
+    .{ .title = "Read cui_ai.c", .status = .done },
+    .{ .title = "Map the 13 APIs", .status = .done },
+    .{ .title = "Write src/ai.zig", .status = .running, .detail = "composer + voice orb" },
+    .{ .title = "Run the regression", .status = .pending },
+};
+
+const ai_sources = [_]zzui.ai.Source{
+    .{ .title = "Zig language reference", .url = "https://ziglang.org/documentation", .snippet = "Comptime runs at compile time..." },
+    .{ .title = "Immediate mode GUI", .url = "https://caseymuratori.com/blog_0001", .snippet = "UI as a pure function of state." },
+};
+
+const ai_suggestions = [_]zzui.ai.PromptSuggestion{
+    .{ .icon = "?", .title = "Explain this page", .detail = "Walk through every control" },
+    .{ .icon = "+", .title = "Add a widget", .detail = "Pick the nearest CUI control" },
+    .{ .icon = "!", .title = "Shrink the binary", .detail = "Find the cheap wins" },
+    .{ .icon = "*", .title = "Run the tests", .detail = "375 cases in one command" },
+};
+
+const ai_models = [_]zzui.ai.Model{
+    .{ .name = "DeepSeek V4.1 Flash", .detail = "fast, 128k context", .badge = "fast" },
+    .{ .name = "DeepSeek V4.1 Pro", .detail = "deeper reasoning, slower" },
+};
+
+const ai_attach = [_][]const u8{ "ai.zig", "cui_ai.c" };
+
 /// 引导在页面内容之后跑（它要压在所有东西之上）。
 fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
     if (st.page != 3 or st.tour_step < 0) return;
@@ -685,6 +797,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-14")) return runShot(14);
     if (hasFlag(cmdline, "--shot-13")) return runShot(13);
     if (hasFlag(cmdline, "--shot-12")) return runShot(12);
     if (hasFlag(cmdline, "--shot-11")) return runShot(11);

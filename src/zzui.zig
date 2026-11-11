@@ -52,6 +52,7 @@ pub const social = @import("social.zig");
 pub const graph = @import("graph.zig");
 pub const nodes = @import("nodes.zig");
 pub const emoji = @import("emoji.zig");
+pub const ai = @import("ai.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");
