@@ -1,12 +1,12 @@
-//! 文档族示例：markdown 视图 + 差异视图（两页）。
-//! 单独一个产物是为了**体积分账**：两族代码约 30 KB，塞进 gallery 会把那个产物顶穿
-//! 335 KB 门槛（实测 gallery 13 页 335,104 B 时再挂 markdown + diff → 366,080 B）。
+//! 文档与可视化族示例：markdown / diff / 火焰图（三页）。
+//! 单独一个产物是为了**体积分账**：几族代码约 34 KB，塞进 gallery 会把那个产物顶穿
+//! 335 KB 门槛（实测 gallery 13 页 334,336 B 时再挂 markdown + diff → 366,080 B）。
 //!
-//! `--once` 无窗口渲染第 0 页；`--shot-0` / `--shot-1` 用隐藏窗口真渲染对应页。
+//! `--once` 无窗口渲染第 0 页；`--shot-0` / `--shot-1` / `--shot-2` 用隐藏窗口真渲染对应页。
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -67,6 +67,23 @@ const State = struct {
     tasks_toggled: u32 = 0,
     /// markdown 的文本是可写的：任务框切换直接改这份缓冲（`applyTask`）。
     notes: [notes_md.len]u8 = notes_md.*,
+    flame_view: zzui.flame.View = .{},
+    flame_selected: i32 = -1,
+};
+
+/// 一段合成 profile：main → parse/render → 各自的子调用。
+const flame_spans = [_]zzui.flame.Span{
+    .{ .name = "main", .start = 0.0, .end = 16.0, .depth = 0 },
+    .{ .name = "parse", .start = 0.0, .end = 6.4, .depth = 1 },
+    .{ .name = "render", .start = 6.4, .end = 16.0, .depth = 1 },
+    .{ .name = "lex", .start = 0.0, .end = 3.1, .depth = 2 },
+    .{ .name = "ast", .start = 3.1, .end = 6.4, .depth = 2 },
+    .{ .name = "layout", .start = 6.4, .end = 9.2, .depth = 2 },
+    .{ .name = "paint", .start = 9.2, .end = 15.4, .depth = 2 },
+    .{ .name = "raster", .start = 9.2, .end = 13.8, .depth = 3 },
+    .{ .name = "blit", .start = 13.8, .end = 15.4, .depth = 3 },
+    .{ .name = "text", .start = 9.2, .end = 11.0, .depth = 4 },
+    .{ .name = "glyphs", .start = 11.0, .end = 13.8, .depth = 4 },
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -92,7 +109,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             zzui.extras.muted(ui, ui.frameStr(st.last_link[0..st.last_link_len]));
         }
         if (st.tasks_toggled > 0) zzui.widgets.textInt(ui, "task toggles = ", @intCast(st.tasks_toggled), "");
-    } else {
+    } else if (st.page == 1) {
         const r = zzui.diff.diffView(ui, "dv", diff_old, diff_new, &st.diff_current, .{
             .old_title = "before.zig",
             .new_title = "after.zig",
@@ -100,6 +117,15 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         });
         zzui.widgets.textInt(ui, "changes = ", @intCast(r.changes), "");
         zzui.widgets.textInt(ui, "current = ", @intCast(@max(r.current, 0)), "");
+    } else {
+        var spans: [flame_spans.len]zzui.flame.Span = flame_spans;
+        zzui.flame.sortSpans(spans[0..]);
+        _ = zzui.flame.flameGraph(ui, "fl", spans[0..], &st.flame_view, &st.flame_selected, .{
+            .width = 0,
+            .row_height = 22,
+        });
+        zzui.widgets.textInt(ui, "selected = ", @intCast(@max(st.flame_selected, 0)), "");
+        zzui.extras.muted(ui, "wheel zooms, drag pans, click selects, double-click zooms to a span, Home fits");
     }
 }
 
@@ -107,6 +133,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-2")) return runShot(2);
     if (hasFlag(cmdline, "--shot-1")) return runShot(1);
     if (hasFlag(cmdline, "--shot")) return runShot(0);
 

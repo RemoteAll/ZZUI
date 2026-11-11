@@ -38,6 +38,7 @@ pub const month = @import("month.zig");
 pub const timeline = @import("timeline.zig");
 pub const markdown = @import("markdown.zig");
 pub const diff = @import("diff.zig");
+pub const flame = @import("flame.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");

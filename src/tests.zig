@@ -30,6 +30,7 @@ test {
     _ = @import("tests_state.zig");
     _ = @import("tests_markdown.zig");
     _ = @import("tests_diff.zig");
+    _ = @import("tests_flame.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {
