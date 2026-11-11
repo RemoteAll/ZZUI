@@ -21,7 +21,8 @@ pub const Match = struct {
     end: i32 = -1,
     /// 模式里的捕获分组数（不含 `(?:` 与 `(?<name>` 也算捕获）。
     groups: usize = 0,
-    /// 1 基；没参与匹配的为 -1。
+    /// 捕获分组的起止；**0 基**：`group_start[0]` 是第 1 个分组（整体命中看 `start`/`end`）。
+    /// 没参与匹配的为 -1。
     group_start: [CAP]i32 = @splat(-1),
     group_end: [CAP]i32 = @splat(-1),
     group_name: [CAP][24]u8 = @splat(@splat(0)),

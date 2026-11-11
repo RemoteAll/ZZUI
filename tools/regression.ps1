@@ -119,8 +119,10 @@ $pickersLimit = 260096
 # 同日再增文件浏览器族（files.zig + 平台层 listDir + Win32 FindFirstFileW）后实测 268,288 B；
 # 同日再增追踪视图 + 网络瀑布（trace.zig，C 档 flame 6/6）后实测 299,008 B，
 # 同日再增代码编辑器（editor.zig，C 档 cui_editor.c 4/4）后实测 316,416 B，
-# 门槛由 307,200 抬到 325,632（+2.9% 余量）。依据见 docs/决策记录.md。
-$docsLimit = 325632
+# 门槛由 307,200 抬到 325,632（+2.9% 余量）。
+# 同日再增正则测试器（regextester.zig，C 档 cui_regex.c 2/2；第 5 页由手写演示改成
+# 完整测试器）后实测 324,096 B，原门槛只剩 1,536 B，故抬到 332,800 B（+2.7%）。
+$docsLimit = 332800
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -408,7 +410,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                     # 引导：整窗被压暗 → 一中灰像素；无压暗时浅底不会出现
                     Check "docs:page3-shade" ($shaded -gt 20000) ("shaded=" + $shaded)
                 } elseif ($pg -eq 4) {
-                    Check "docs:page4-textok" ($hued -gt 100) ("hued=" + $hued)
+                    # 正则测试器：命中与每个分组各有一层净色块（强调色 + 系列色）→ 成片彩色
+                    Check "docs:page4-hits" ($hued -gt 3000) ("hued=" + $hued)
                 } elseif ($pg -eq 6) {
                     # 追踪 + 瀑布：两条视图的条都是哈希/分段配色 → 成片彩色；
                     # 另外表格里的 404 行是红色 → 红像素、以及表格蓝底强调色都要有

@@ -36,6 +36,7 @@ test {
     _ = @import("tests_files.zig");
     _ = @import("tests_trace.zig");
     _ = @import("tests_editor.zig");
+    _ = @import("tests_regextester.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

@@ -72,9 +72,12 @@ const State = struct {
     /// 引导当前步骤（-1 = 未开始）。
     tour_step: i32 = -1,
     /// 正则测试器：模式与文本（调用方持有，可编辑）。
-    re_pattern: [32]u8 = @splat(0),
-    re_pattern_len: usize = 0,
-    re_caret: usize = 0,
+    re_pattern: [32]u8 = re_pat.* ++ @as([32 - re_pat.len]u8, @splat(0)),
+    re_pattern_len: usize = re_pat.len,
+    re_caret: usize = re_pat.len,
+    re_text: [re_sample.len]u8 = re_sample.*,
+    re_text_len: usize = re_sample.len,
+    rt: zzui.regextester.TesterState = .{},
     /// 文件浏览器（真实目录：Win32 后端枚举，null 后端返回 -1）
     fb_path: zzui.files.Path = .{},
     fb: zzui.files.State = .{},
@@ -100,6 +103,9 @@ const re_sample =
     "Contact: dev@example.com or ops@example.com\n" ++
     "Build: zig build -Doptimize=ReleaseSmall\n" ++
     "Tag: v2.4.0, commit 91cbf17\n";
+
+/// 页面默认填好的模式：两个命名分组，能直接看到分组名与色块。
+const re_pat = "(?<user>[a-z]+)@(?<host>[a-z.]+)";
 
 /// 一段合成 profile：main → parse/render → 各自的子调用（火焰图用）。
 const flame_spans = [_]zzui.flame.Span{
@@ -210,25 +216,20 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         zzui.widgets.checkbox(ui, "Auto save", &on);
         _ = zzui.widgets.input(ui, "Project name", &st.re_pattern, &st.re_pattern_len, &st.re_caret, .{ .placeholder = "my-project" });
     } else if (st.page == 4) {
-        zzui.extras.muted(ui, "Regex: type a pattern, the first match is reported");
-        _ = zzui.widgets.input(ui, "pattern", &st.re_pattern, &st.re_pattern_len, &st.re_caret, .{ .placeholder = "\\w+@\\w+" });
-        const pat = st.re_pattern[0..st.re_pattern_len];
-        var m = zzui.regex.Match{};
-        const r = zzui.regex.search(pat, zzui.regex.ICASE, re_sample, 0, &m, null);
-        switch (r) {
-            .invalid_pattern => zzui.extras.badge(ui, "invalid pattern", .danger),
-            .none => zzui.extras.muted(ui, "no match"),
-            .too_slow => zzui.extras.badge(ui, "too slow", .warn),
-            .found => {
-                zzui.widgets.textInt(ui, "first match at ", @intCast(m.start), "");
-                if (m.start >= 0 and m.end > m.start) {
-                    zzui.extras.code(ui, re_sample[@intCast(m.start)..@intCast(m.end)]);
-                }
-                if (m.groups > 0) zzui.widgets.textInt(ui, "groups = ", @intCast(m.groups), "");
-            },
-        }
-        zzui.widgets.separator(ui);
-        _ = ui.textRun(re_sample, zzui.theme.font_body, zzui.theme.secondary);
+        zzui.extras.muted(ui, "Regex tester: pattern + i/m/s flags + highlighted sample + match list");
+        const r = zzui.regextester.tester(
+            ui,
+            "docs-rt",
+            st.re_pattern[0..],
+            &st.re_pattern_len,
+            &st.re_caret,
+            st.re_text[0..],
+            &st.re_text_len,
+            &st.rt,
+            .{ .height = 150 },
+        );
+        if (r.err) |e| zzui.extras.badge(ui, e, .danger);
+        if (!r.valid and r.err == null) zzui.extras.muted(ui, "type a pattern to see matches");
     } else if (st.page == 6) {
         zzui.extras.muted(ui, "Trace: wheel zooms, drag pans, Shift+drag measures, double-click zooms to a span, click a lane name to fold it");
         var spans: [trace_spans.len]zzui.trace.Span = trace_spans;

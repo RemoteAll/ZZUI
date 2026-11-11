@@ -335,6 +335,12 @@ fn pushRun(out: *[MAX_RUNS]Run, n: *usize, start: usize, end: usize, kind: u8) v
 fn tokenize(lang: Lang, line: []const u8, out: *[MAX_RUNS]Run) usize {
     var n: usize = 0;
     var i: usize = 0;
+    // 纯文本：整行一个 run，不认关键字/字符串/数字（正则测试器这类“任意文本”场景）
+    if (lang == .plain) {
+        if (line.len == 0) return 0;
+        out[0] = .{ .start = 0, .end = line.len, .kind = 0 };
+        return 1;
+    }
     const lc: []const u8 = switch (lang) {
         .python, .shell => "#",
         .json => "",
@@ -964,6 +970,7 @@ pub fn codeEditor(
             const disp = expandTabs(line, opts.tab_size, disp_buf[0..]);
             const owned = ui.frameStr(disp);
             var runs: [MAX_RUNS]Run = undefined;
+            // 纯文本（`lang = "text"`）整行一个 run：数字/引号都不该上色
             const rn = tokenize(lang, owned, &runs);
             var k: usize = 0;
             while (k < rn) : (k += 1) {
