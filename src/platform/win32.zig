@@ -112,7 +112,8 @@ pub const Backend = struct {
     }
 
     pub fn poll(self: *Backend) bool {
-        var msg: w.MSG = undefined;        while (w.PeekMessageW(&msg, null, 0, 0, w.PM_REMOVE) != 0) {
+        var msg: w.MSG = undefined;
+        while (w.PeekMessageW(&msg, null, 0, 0, w.PM_REMOVE) != 0) {
             if (msg.message == WM_QUIT) return false;
             _ = w.TranslateMessage(&msg);
             _ = w.DispatchMessageW(&msg);

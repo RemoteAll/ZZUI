@@ -94,7 +94,9 @@ pub const MAX_NODES = 256;
 pub const MAX_COMMANDS = 512;
 pub const MAX_DEPTH = 12;
 pub const MAX_HITS = 128;
-pub const MAX_FOCUS = 64;
+/// Tab 顺序池：dense 页面（两月日历 + 时分选择 + 两个滚轮）实测需要上百个，
+/// 64 会把后面的控件静默挤出 Tab 顺序（现在溢出会被 markOverflow 抓到）。
+pub const MAX_FOCUS = 128;
 pub const MAX_OVERLAYS = 192;
 pub const MAX_TEXT_POOL = 8192;
 pub const MAX_SCROLLS = 16;
@@ -111,11 +113,15 @@ const ScrollState = struct {
     id: u64 = 0,
     offset: f32 = 0,
     content_h: f32 = 0,
+    /// 最近一次被用到的时间（池满时按它淘汰，见 `scrollState`）。
+    used: f64 = 0,
 };
 
 const TipState = struct {
     id: u64 = 0,
     start: f64 = 0,
+    /// 最近一次被用到的时间（池满时按它淘汰）。
+    used: f64 = 0,
 };
 
 /// 一条动画轨道：`value` 是当前插值值（一般 0..1），`last` 用于算 dt，`used` 用于淘汰。
@@ -626,9 +632,11 @@ pub const Context = struct {
 
     /// `focusable` 的控件会进入 Tab 顺序，并响应空格/回车激活。
     pub fn interactEx(self: *Context, id: u64, rect: t.Rect, focusable: bool) Interaction {
-        if (focusable and self.focus_curr_n < MAX_FOCUS) {
-            self.focus_curr[self.focus_curr_n] = id;
-            self.focus_curr_n += 1;
+        if (focusable) {
+            if (self.focus_curr_n < MAX_FOCUS) {
+                self.focus_curr[self.focus_curr_n] = id;
+                self.focus_curr_n += 1;
+            } else self.markOverflow("focus");
         }
         if (self.hits_curr_n < MAX_HITS) {
             self.hits_curr[self.hits_curr_n] = .{ .id = id, .rect = rect, .layer = self.overlay_layer };
@@ -701,14 +709,25 @@ pub const Context = struct {
     }
 
     /// 悬停计时（tooltip 用）：返回该 id 的首次悬停时间，首次调用时记录当前时间。
+    /// 池满时按**最久未使用**淘汰 —— 原来满了就直接不记，第 17 个 tooltip 永远不出现。
     pub fn hoverStart(self: *Context, id: u64) f64 {
         var i: usize = 0;
         while (i < self.tip_n) : (i += 1) {
-            if (self.tips[i].id == id) return self.tips[i].start;
+            if (self.tips[i].id == id) {
+                self.tips[i].used = self.time;
+                return self.tips[i].start;
+            }
         }
-        if (self.tip_n >= self.tips.len) return self.time;
-        self.tips[self.tip_n] = .{ .id = id, .start = self.time };
-        self.tip_n += 1;
+        if (self.tip_n < self.tips.len) {
+            self.tips[self.tip_n] = .{ .id = id, .start = self.time, .used = self.time };
+            self.tip_n += 1;
+            return self.time;
+        }
+        var oldest: usize = 0;
+        for (self.tips, 0..) |tp, k| {
+            if (tp.used < self.tips[oldest].used) oldest = k;
+        }
+        self.tips[oldest] = .{ .id = id, .start = self.time, .used = self.time };
         return self.time;
     }
 
@@ -847,15 +866,28 @@ pub const Context = struct {
         return self.node_count - 1;
     }
 
+    /// 取（或建）某个滚动区的状态。池满时按**最久未使用**淘汰；
+    /// 原来满了直接返回槽 0，等于让两个滚动区**共用同一个偏移**（页面上第 17 个滚动区一滚，
+    /// 第一个就跟着跳），是实打实的串味 bug。
     fn scrollState(self: *Context, id: u64) *ScrollState {
         var i: usize = 0;
         while (i < self.scroll_n) : (i += 1) {
-            if (self.scrolls[i].id == id) return &self.scrolls[i];
+            if (self.scrolls[i].id == id) {
+                self.scrolls[i].used = self.time;
+                return &self.scrolls[i];
+            }
         }
-        if (self.scroll_n >= self.scrolls.len) return &self.scrolls[0];
-        self.scrolls[self.scroll_n] = .{ .id = id };
-        self.scroll_n += 1;
-        return &self.scrolls[self.scroll_n - 1];
+        if (self.scroll_n < self.scrolls.len) {
+            self.scrolls[self.scroll_n] = .{ .id = id, .used = self.time };
+            self.scroll_n += 1;
+            return &self.scrolls[self.scroll_n - 1];
+        }
+        var oldest: usize = 0;
+        for (self.scrolls, 0..) |sc, k| {
+            if (sc.used < self.scrolls[oldest].used) oldest = k;
+        }
+        self.scrolls[oldest] = .{ .id = id, .used = self.time };
+        return &self.scrolls[oldest];
     }
 
     /// 某滚动区当前偏移（供虚拟列表与测试查询）。

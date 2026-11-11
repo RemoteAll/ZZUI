@@ -252,7 +252,8 @@ pub fn monthCalendar(
             const this_day = Date{ .year = month.year, .month = month.month, .day = @intCast(day_num) };
             const is_today = if (today) |td| td.eql(this_day) else false;
             const is_sel = if (opts.selected) |sel| sel.eql(this_day) else false;
-            const hit = ui.interactEx(core.Context.idOf(id) ^ (0xD00 + cell_index), cell, true);
+            // 格子只响应鼠标：不做 Tab 停靠点（否则一个月 42 格会把焦点池占满）
+            const hit = ui.interact(core.Context.idOf(id) ^ (0xD00 + cell_index), cell);
 
             const bg: t.Color = if (is_sel)
                 theme.accent_bg
@@ -284,7 +285,7 @@ pub fn monthCalendar(
                 if (shown < 2) {
                     const bar = t.Rect{ .x = x + 4, .y = y + 22 + @as(f32, @floatFromInt(shown)) * 15, .w = cell_w - 8, .h = 13 };
                     const c = extras.toneColors(ev.tone);
-                    const bhit = ui.interactEx(core.Context.idOf(id) ^ (0xE00 + ei), bar, true);
+                    const bhit = ui.interact(core.Context.idOf(id) ^ (0xE00 + ei), bar);
                     ui.addBox(bar, .{ .fill = c.bg, .radius = 3 });
                     ui.addBox(.{ .x = bar.x, .y = bar.y, .w = 3, .h = bar.h }, .{ .fill = c.fg, .radius = 2 });
                     const em = ui.measureText(ev.title, theme.font_small);

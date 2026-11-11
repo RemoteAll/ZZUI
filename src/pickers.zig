@@ -252,7 +252,8 @@ fn multiPopup(ui: *core.Context, id: []const u8, items: []const []const u8, sele
         if (opts.searchable and query.len > 0 and !containsNoCase(items[i], query)) continue;
         const ir = t.Rect{ .x = box.x + pad, .y = top, .w = box.w - pad * 2, .h = opts.item_h };
         top += opts.item_h;
-        const it = ui.interactEx(idOf(id, 0xB0 +% @as(u64, i)), ir, true);
+        // 列表项只响应鼠标：Tab 停靠点是整个下拉框，不是每一项
+        const it = ui.interact(idOf(id, 0xB0 +% @as(u64, i)), ir);
         if (it.hover) ui.addBox(ir, .{ .fill = theme.surface, .radius = 6 });
         // 复选框
         const bs: f32 = 14;
@@ -400,7 +401,8 @@ fn drawMonth(
         const in_range = range.contains(day);
         const is_start = range.start.year > 0 and range.start.eql(day);
         const is_end = range.end.year > 0 and range.end.eql(day);
-        const it = ui.interactEx(idOf(id, 0xD00 +% @as(u64, slot) * 0x4000 +% @as(u64, idx + 1)), cr, true);
+        // 日历格只响应鼠标（两月 60+ 格会把焦点池占满）
+        const it = ui.interact(idOf(id, 0xD00 +% @as(u64, slot) * 0x4000 +% @as(u64, idx + 1)), cr);
         if (is_start or is_end) {
             ui.addBox(cr.inset(1), .{ .fill = theme.accent, .radius = 6 });
         } else if (in_range) {
@@ -576,7 +578,7 @@ pub fn dateRangePicker(
         while (pi < preset_names.len) : (pi += 1) {
             const pr = t.Rect{ .x = box.x + pad, .y = top, .w = box.w - pad * 2, .h = 24 };
             top += 26;
-            const it = ui.interactEx(idOf(id, 0xB5 +% @as(u64, pi)), pr, true);
+            const it = ui.interact(idOf(id, 0xB5 +% @as(u64, pi)), pr);
             if (it.hover) ui.addBox(pr, .{ .fill = theme.surface, .radius = 6 });
             const m = ui.measureText(preset_names[pi], theme.font_body);
             ui.addText(.{ .x = pr.x + 6, .y = pr.y + (pr.h - m.h) / 2, .w = m.w, .h = m.h }, preset_names[pi], theme.font_body, theme.text);
@@ -638,7 +640,8 @@ fn timeColumn(ui: *core.Context, id: u64, rect: t.Rect, count: i32, value: i32, 
         if (offset < -half_rows or offset > half_rows) continue;
         const y = rect.y + rect.h / 2 - row_h / 2 + @as(f32, @floatFromInt(offset)) * row_h;
         const ir = t.Rect{ .x = rect.x, .y = y, .w = rect.w, .h = row_h };
-        const it = ui.interactEx(id ^ (0x7C0 +% @as(u64, @intCast(i))), ir, true);
+        // 滚轮行只响应鼠标：方向键交给整个滚轮（外层 focusable）
+        const it = ui.interact(id ^ (0x7C0 +% @as(u64, @intCast(i))), ir);
         var vb: [8]u8 = @splat(0);
         var n: usize = 0;
         const v = base + i * step;
@@ -768,7 +771,7 @@ pub fn wheelPicker(
     const h = opts.row_h * @as(f32, @floatFromInt(visible));
     const rect = ui.reserve(opts.width, h, false);
     const id_base = idOf(id, 0x7EE1);
-    const it = ui.interactEx(id_base, rect, true);
+    const it = ui.interact(id_base, rect);
 
     // 拖动 / 滚轮 / 键盘
     // 注意：`Interaction.pressed` 在拖动期间**每帧都是 true**（"active 且按下"），
