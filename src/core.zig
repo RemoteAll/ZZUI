@@ -291,11 +291,10 @@ pub const ScrollScope = struct {
             ui.addBox(.{ .x = track_x, .y = thumb_y, .w = self.bar_w, .h = thumb_h }, .{ .fill = theme.border, .radius = self.bar_w / 2 });
         }
 
-        const p = &ui.stack[f.parent];
-        switch (p.dir) {
-            .column => advance(p, self.rect.h, self.rect.h),
-            .row => advance(p, self.rect.w, self.rect.h),
-        }
+        // 父容器**不在这里推进**：`scroll` 开头的 `reserve` 已经占好位置了。
+        // 原来这里又 `advance` 一次，等于每个滚动区在布局里占 **2 倍高度**
+        // （高度 100 的滚动区，后面的兄弟从 y=200 开始；卡片底下一大片空白，
+        // 视口只有一半高）。2026-11-11 实测确认后去掉。
     }
 };
 

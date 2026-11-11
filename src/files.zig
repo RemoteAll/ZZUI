@@ -431,10 +431,10 @@ pub fn fileBrowser(
         const name_w = col_w * 0.60 - 18;
         ui.addText(.{ .x = name_x, .y = row.y + (row_h - theme.font_small * 1.35) / 2, .w = name_w, .h = theme.font_small * 1.35 }, e.name, theme.font_small, theme.text);
         var dbuf: [16]u8 = undefined;
-        const dtx = fmtDate(dbuf[0..], e.modified);
+        const dtx = ui.frameStr(fmtDate(dbuf[0..], e.modified));
         ui.addText(.{ .x = row.x + col_w * 0.60 + 6, .y = row.y + (row_h - theme.font_small * 1.35) / 2, .w = col_w * 0.25, .h = theme.font_small * 1.35 }, dtx, theme.font_small, theme.secondary);
         var sbuf: [24]u8 = undefined;
-        const stx = if (e.dir) "-" else fmtSize(sbuf[0..], e.size);
+        const stx = if (e.dir) "-" else ui.frameStr(fmtSize(sbuf[0..], e.size));
         ui.addText(.{ .x = row.x + col_w * 0.85 + 6, .y = row.y + (row_h - theme.font_small * 1.35) / 2, .w = col_w * 0.15, .h = theme.font_small * 1.35 }, stx, theme.font_small, theme.secondary);
 
         if (it.clicked) {

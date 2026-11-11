@@ -68,10 +68,12 @@ fn eqName(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-fn nameKey(sp: Span) u32 {
-    if (sp.color_key != 0) return sp.color_key;
+/// 条色的 key：调用方给了 `color_key` 就用它，否则按名字哈希（同一个函数永远同色）。
+/// trace 族复用同一套配色，两个视图里同名 span 颜色一致。
+pub fn spanKey(name: []const u8, color_key: u32) u32 {
+    if (color_key != 0) return color_key;
     var h: u32 = 0xF1A3;
-    for (sp.name) |c| {
+    for (name) |c| {
         h ^= c;
         h *%= 16777619; // FNV-1a 32
     }
@@ -79,14 +81,14 @@ fn nameKey(sp: Span) u32 {
 }
 
 /// 由 key 得到稳定的条色：色相散布、饱和度低，与主题底混合后不刺眼。
-fn spanColor(key: u32) t.Color {
+pub fn spanColor(key: u32) t.Color {
     const hue: f32 = @floatFromInt(key % 360);
     const sat: f32 = 0.40;
     const light: f32 = if (theme.isDark()) 0.40 else 0.74;
     return hsl(hue / 360.0, sat, light);
 }
 
-fn hsl(h: f32, s: f32, l: f32) t.Color {
+pub fn hsl(h: f32, s: f32, l: f32) t.Color {
     const q = if (l < 0.5) l * (1 + s) else l + s - l * s;
     const p = 2 * l - q;
     const r = hue2rgb(p, q, h + 1.0 / 3.0);
@@ -111,7 +113,7 @@ fn hue2rgb(p: f32, q: f32, tt: f32) f32 {
 }
 
 /// 1 / 2 / 5 × 10^n（不用 log10，省掉数学库）。
-fn niceStep(raw: f64) f64 {
+pub fn niceStep(raw: f64) f64 {
     if (!(raw > 0)) return 1;
     var v = raw;
     var p: f64 = 1;
@@ -128,7 +130,7 @@ fn niceStep(raw: f64) f64 {
 }
 
 /// 秒 → 带单位的文本（1.23 ms / 456 µs / 3.2 s），写进 buf。
-fn fmtSeconds(buf: []u8, sec: f64) []const u8 {
+pub fn fmtSeconds(buf: []u8, sec: f64) []const u8 {
     var v = sec;
     var unit: []const u8 = "s";
     if (sec < 1e-6) {
@@ -358,8 +360,8 @@ pub fn flameGraph(
     // 背景
     ui.addBox(rect, .{ .fill = theme.surface, .radius = 10, .border = theme.border });
     // 刻度栏
-    const ruler = t.Rect{ .x = rect.x, .y = rect.y, .w = rect.w, .h = RULER_H };
-    ui.addBox(ruler, .{ .fill = theme.raised, .radius = 10 });
+    const ruler_rect = t.Rect{ .x = rect.x, .y = rect.y, .w = rect.w, .h = RULER_H };
+    ui.addBox(ruler_rect, .{ .fill = theme.raised, .radius = 10 });
     ui.addOverlayLine(.{ .x = rect.x, .y = rect.y + RULER_H }, .{ .x = rect.x + rect.w, .y = rect.y + RULER_H }, 1, theme.border);
 
     const kf: f32 = @floatCast(plot_w / range);
@@ -369,7 +371,7 @@ pub fn flameGraph(
     const first_row: i32 = @intFromFloat(scroll_rows);
 
     // 时间刻度与网格
-    drawRuler(ui, view.*, rect, px0, plot_w, body_h + PAD_Y * 2, t0);
+    ruler(ui, rect, px0, plot_w, body_h + PAD_Y * 2, view.start, view.end, t0);
 
     // 视口裁剪：条只画在面板内
     const saved_clip = ui.clip;
@@ -389,7 +391,7 @@ pub fn flameGraph(
             const x1 = px0 + @as(f32, @floatCast((sp.end - view.start) * kf));
             const w = @max(x1 - x0, 1.0);
             const bar = t.Rect{ .x = x0, .y = y, .w = w, .h = row_h - 2 };
-            const fill = spanColor(nameKey(sp));
+            const fill = spanColor(spanKey(sp.name, sp.color_key));
             ui.addBox(bar, .{ .fill = fill, .radius = 3 });
             const is_sel = cur == @as(i32, @intCast(i));
             if (is_sel) {
@@ -455,8 +457,10 @@ fn hitTest(spans: []const Span, view: View, rect: t.Rect, mx: f32, my: f32, row_
     return -1;
 }
 
-fn drawRuler(ui: *core.Context, view: View, rect: t.Rect, px0: f32, plot_w: f32, grid_h: f32, origin: f64) void {
-    const range = view.end - view.start;
+/// 时间刻度栏 + 网格：`rect` 顶部 `RULER_H` 高，`t0..t1` 是可见范围，`origin` 是刻度零点。
+/// 火焰图与追踪视图共用（同一套单位与时标，两个视图并排看不会打架）。
+pub fn ruler(ui: *core.Context, rect: t.Rect, px0: f32, plot_w: f32, grid_h: f32, t0: f64, t1: f64, origin: f64) void {
+    const range = t1 - t0;
     if (!(range > 0) or plot_w <= 0) return;
     const step = niceStep(range * 72.0 / @as(f64, plot_w));
     var unit: f64 = 1;
@@ -474,13 +478,13 @@ fn drawRuler(ui: *core.Context, view: View, rect: t.Rect, px0: f32, plot_w: f32,
         }
     }
     const kf: f64 = @as(f64, plot_w) / range;
-    const first = @ceil((view.start - origin) / step - 1e-9);
-    const last = @floor((view.end - origin) / step + 1e-9);
+    const first = @ceil((t0 - origin) / step - 1e-9);
+    const last = @floor((t1 - origin) / step + 1e-9);
     var q = first;
     var guard: usize = 0;
     while (q <= last and guard < 64) : (guard += 1) {
         const tt = origin + q * step;
-        const x = px0 + @as(f32, @floatCast((tt - view.start) * kf));
+        const x = px0 + @as(f32, @floatCast((tt - t0) * kf));
         ui.addOverlayLine(.{ .x = x, .y = rect.y + RULER_H }, .{ .x = x, .y = rect.y + RULER_H + grid_h }, 1, theme.hair);
         ui.addOverlayLine(.{ .x = x, .y = rect.y + RULER_H - 5 }, .{ .x = x, .y = rect.y + RULER_H }, 1, theme.border);
         var vb = q * step / unit;

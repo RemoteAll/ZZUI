@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -80,9 +80,14 @@ const State = struct {
     fb: zzui.files.State = .{},
     picked: [128]u8 = @splat(0),
     picked_len: usize = 0,
+    /// 追踪视图（时间轴 + 轨道）与网络瀑布
+    tr_tracks: [3]zzui.trace.Track = .{ .{ .name = "main" }, .{ .name = "worker" }, .{ .name = "gc" } },
+    tr_view: zzui.trace.View = .{},
+    tr_sel: i32 = -1,
+    tr_state: zzui.trace.State = .{},
+    wf_sel: i32 = -1,
 };
 
-/// 一段合成 profile：main → parse/render → 各自的子调用。
 /// 正则测试器的样本文本。
 const re_sample =
     "Release 2.4 (2026-11-11)\n" ++
@@ -90,6 +95,7 @@ const re_sample =
     "Build: zig build -Doptimize=ReleaseSmall\n" ++
     "Tag: v2.4.0, commit 91cbf17\n";
 
+/// 一段合成 profile：main → parse/render → 各自的子调用（火焰图用）。
 const flame_spans = [_]zzui.flame.Span{
     .{ .name = "main", .start = 0.0, .end = 16.0, .depth = 0 },
     .{ .name = "parse", .start = 0.0, .end = 6.4, .depth = 1 },
@@ -102,6 +108,35 @@ const flame_spans = [_]zzui.flame.Span{
     .{ .name = "blit", .start = 13.8, .end = 15.4, .depth = 3 },
     .{ .name = "text", .start = 9.2, .end = 11.0, .depth = 4 },
     .{ .name = "glyphs", .start = 11.0, .end = 13.8, .depth = 4 },
+};
+
+/// 三条轨道（main / worker / gc）的追踪：同一时间轴上错开的嵌套 span。
+const trace_spans = [_]zzui.trace.Span{
+    .{ .name = "frame", .start = 0.0, .end = 9.6, .track = 0, .depth = 0 },
+    .{ .name = "update", .start = 0.2, .end = 4.0, .track = 0, .depth = 1 },
+    .{ .name = "render", .start = 4.2, .end = 9.4, .track = 0, .depth = 1 },
+    .{ .name = "layout", .start = 4.2, .end = 6.0, .track = 0, .depth = 2 },
+    .{ .name = "paint", .start = 6.0, .end = 9.4, .track = 0, .depth = 2 },
+    .{ .name = "decode", .start = 1.0, .end = 5.6, .track = 1, .depth = 0 },
+    .{ .name = "inflate", .start = 1.4, .end = 3.2, .track = 1, .depth = 1 },
+    .{ .name = "upload", .start = 3.2, .end = 5.6, .track = 1, .depth = 1 },
+    .{ .name = "sweep", .start = 2.4, .end = 3.1, .track = 2, .depth = 0 },
+    .{ .name = "mark", .start = 7.0, .end = 7.8, .track = 2, .depth = 0 },
+};
+
+const trace_markers = [_]zzui.trace.Marker{
+    .{ .name = "GC", .time = 3.1, .tone = .warn },
+    .{ .name = "deploy", .time = 8.4, .tone = .info },
+};
+
+/// 一次页面加载的请求（含一条 404）。
+const net_requests = [_]zzui.trace.NetRequest{
+    .{ .name = "/index.html", .method = "GET", .status = 200, .type = "document", .size = 8_412, .start = 0.00, .timing = .{ 0, 0.012, 0.028, 0.052, 0.120, 0.045 } },
+    .{ .name = "/app.js", .method = "GET", .status = 200, .type = "script", .size = 96_512, .start = 0.24, .timing = .{ 0.02, 0, 0.030, 0.046, 0.085, 0.140 } },
+    .{ .name = "/app.css", .method = "GET", .status = 200, .type = "stylesheet", .size = 12_880, .start = 0.26, .timing = .{ 0.01, 0, 0.026, 0.040, 0.062, 0.038 } },
+    .{ .name = "/api/session", .method = "POST", .status = 201, .type = "json", .size = 640, .start = 0.62, .timing = .{ 0, 0, 0.024, 0.044, 0.210, 0.012 } },
+    .{ .name = "/logo.png", .method = "GET", .status = 404, .type = "image", .size = 0, .start = 0.88, .timing = .{ 0, 0.010, 0.022, 0.038, 0.048, 0.004 } },
+    .{ .name = "/fonts/inter.woff2", .method = "GET", .status = 200, .type = "font", .size = 34_208, .start = 1.05, .timing = .{ 0.02, 0, 0.034, 0.052, 0.076, 0.126 } },
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -172,6 +207,20 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         }
         zzui.widgets.separator(ui);
         _ = ui.textRun(re_sample, zzui.theme.font_body, zzui.theme.secondary);
+    } else if (st.page == 6) {
+        zzui.extras.muted(ui, "Trace: wheel zooms, drag pans, Shift+drag measures, double-click zooms to a span, click a lane name to fold it");
+        var spans: [trace_spans.len]zzui.trace.Span = trace_spans;
+        zzui.trace.sortSpans(spans[0..]);
+        const tr = zzui.trace.traceView(ui, "docs-tr", st.tr_tracks[0..], spans[0..], &st.tr_view, &st.tr_sel, &st.tr_state, .{
+            .markers = trace_markers[0..],
+        });
+        if (tr.selection_changed) zzui.extras.muted(ui, "a span is selected: Enter zooms to it, Esc clears it");
+        _ = zzui.trace.waterfall(ui, "docs-wf", net_requests[0..], .{
+            .selected = &st.wf_sel,
+            .dom_loaded = 0.72,
+            .loaded = 1.28,
+            .height = 300,
+        });
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -184,7 +233,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         if (st.picked_len > 0) {
             zzui.extras.muted(ui, ui.frameStr(st.picked[0..st.picked_len]));
         } else {
-            zzui.extras.muted(ui, "nothing picked yet");
+            zzui.widgets.textInt(ui, "n = ", @intCast(st.fb.n), "");
         }
     }
 }
@@ -204,6 +253,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-6")) return runShot(6);
     if (hasFlag(cmdline, "--shot-5")) return runShot(5);
     if (hasFlag(cmdline, "--shot-4")) return runShot(4);
     if (hasFlag(cmdline, "--shot-3")) return runShot(3);

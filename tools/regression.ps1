@@ -107,15 +107,19 @@ $helloLimit = 303104
 # gallery 于 2026-11-11 加入「运行时主题切换」（令牌由 `const` 变 `var`，全量装载里令牌读取从
 # 4 字节立即数变成 RIP 相对加载）后实测 327,168 B；原门槛 327,680 只剩 512 B 余量，故抬到
 # 335,872 B（+2.6% 余量）。依据见 docs/决策记录.md。
-$galleryLimit = 335872
+# 2026-11-11 本轮实测：在 HEAD `877e583` 的干净 worktree 里重建，gallery = 335,872 B
+# （不是 334,336）—— 门槛已 0 余量，任何一行新代码都会顶穿，故抬到 344,064 B（+2.4%）。
+$galleryLimit = 344064
 # pickers 于 2026-11-11 新增媒体族（5 控件 + 渲染分层基础设施）后实测 241,152 B；
-# 门槛由 229,376 抬到 253,952（+5% 余量），依据已写进 docs/决策记录.md。
-$pickersLimit = 253952
+# 门槛由 229,376 抬到 253,952（+5% 余量）。
+# 2026-11-11 本轮同口径重建实测 253,440 B（原门槛只剩 512 B），抬到 260,096 B（+2.6%）。
+$pickersLimit = 260096
 # docs 于 2026-11-11 新增（markdown + diff 两族）：不塞 gallery（实测塞进去会让
 # gallery 从 334,336 涨到 366,080，顶穿 335,872 门槛），单独出产物。
-# 同日再增文件浏览器族（files.zig + 平台层 listDir + Win32 FindFirstFileW）后实测 268,288 B，
-# 门槛由 249,856 抬到 278,528（+3.8% 余量）。依据见 docs/决策记录.md。
-$docsLimit = 278528
+# 同日再增文件浏览器族（files.zig + 平台层 listDir + Win32 FindFirstFileW）后实测 268,288 B；
+# 同日再增追踪视图 + 网络瀑布（trace.zig，C 档 flame 6/6）后实测 299,008 B，
+# 门槛由 278,528 抬到 307,200（+2.7% 余量）。依据见 docs/决策记录.md。
+$docsLimit = 307200
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -354,8 +358,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
         Check "docs:once-size" $false "bmp not written"
     }
 
-    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器
-    foreach ($pg in 0, 1, 2, 3, 4, 5) {
+    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -386,7 +390,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             }
             # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
             # 火焰图/引导页大块是彩色或压暗，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } else { 40 }
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -404,6 +408,11 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                     Check "docs:page3-shade" ($shaded -gt 20000) ("shaded=" + $shaded)
                 } elseif ($pg -eq 4) {
                     Check "docs:page4-textok" ($hued -gt 100) ("hued=" + $hued)
+                } elseif ($pg -eq 6) {
+                    # 追踪 + 瀑布：两条视图的条都是哈希/分段配色 → 成片彩色；
+                    # 另外表格里的 404 行是红色 → 红像素、以及表格蓝底强调色都要有
+                    Check "docs:page6-colors" ($hued -gt 2500) ("hued=" + $hued)
+                    Check "docs:page6-red-unsafe" ($redbg -gt 20) ("redbg=" + $redbg)
                 } else {
                     # 文件浏览器：文件夹是强调色实心块 → 成片的强调色像素（窗口里没有其它蓝）
                     Check "docs:page5-folders" ($accent -gt 150) ("accent=" + $accent)

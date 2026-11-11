@@ -34,6 +34,7 @@ test {
     _ = @import("tests_regex.zig");
     _ = @import("tests_tour.zig");
     _ = @import("tests_files.zig");
+    _ = @import("tests_trace.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {
@@ -313,6 +314,22 @@ test "scroll clamps offset to content height" {
     // 内容高 = 20*20 + 19*4 = 476；max offset = 476 - 100 = 376
     try std.testing.expectApproxEqAbs(@as(f32, 376), off, 0.01);
 }
+
+test "scroll reserves its height once in the parent column" {
+    // 曾经的 bug：`scroll` 里的 `reserve` 占位一次，`ScrollScope.end` 又 advance
+    // 一次 → 高度 100 的滚动区在布局里占 200（卡片底下一大片空白、视口只有一半高）。
+    var ui = core.Context{};
+    ui.begin(300, 400);
+    var col = ui.column(.{ .gap = 0 });
+    var sc = ui.scroll(.{ .id = "once", .height = 100, .gap = 0 });
+    _ = ui.reserve(100, 20, false);
+    sc.end();
+    const after = ui.reserve(100, 20, false);
+    col.end();
+    ui.paint();
+    try std.testing.expectApproxEqAbs(@as(f32, 100), after.y, 0.01);
+}
+
 test "menu selects an item and closes" {
     var ui = core.Context{};
     var open = true;
