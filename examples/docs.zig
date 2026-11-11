@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -136,6 +136,11 @@ const State = struct {
     nd_next_link: i32 = 200,
     nd_last: [72]u8 = @splat(0),
     nd_last_len: usize = 0,
+    /// emoji 选择器（肤色与最近使用由我们持有）
+    em_st: zzui.emoji.State = .{},
+    em_tone: u8 = 0,
+    em_recent: [96]u8 = @splat(0),
+    em_recent_len: usize = 0,
     /// 图族：提交图（泳道）+ 依赖图（分层/缩放平移）
     gr_cs: zzui.graph.CommitState = .{},
     gr_ds: zzui.graph.DepState = .{},
@@ -561,6 +566,35 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             @memcpy(st.nd_last[0..msg.len], msg);
         }
         zzui.extras.muted(ui, ui.frameStr(st.nd_last[0..st.nd_last_len]));
+    } else if (st.page == 13) {
+        zzui.extras.muted(ui, "Emoji: the platform font draws them - the picker has search, group tabs, recents, skin tones and a preview");
+        {
+            var samples = ui.row(.{ .gap = 10 });
+            zzui.emoji.emoji(ui, "\u{1F600}", 26);
+            zzui.emoji.emoji(ui, "\u{1F44D}", 32);
+            zzui.emoji.emoji(ui, "\u{1F680}", 38);
+            zzui.emoji.emoji(ui, "\u{2764}\u{FE0F}", 30);
+            zzui.emoji.emoji(ui, "\u{1F1E8}\u{1F1F3}", 30);
+            samples.end();
+        }
+        _ = zzui.emoji.picker(ui, "docs-emoji", &st.em_st, .{
+            .width = 360,
+            .height = 250,
+            .tone = &st.em_tone,
+            .recent = st.em_recent[0..],
+            .recent_len = &st.em_recent_len,
+        });
+        if (st.em_recent_len > 0) {
+            var recents = ui.row(.{ .gap = 6 });
+            var it = std.mem.splitScalar(u8, st.em_recent[0..st.em_recent_len], ' ');
+            var guard: usize = 0;
+            while (it.next()) |item| {
+                if (item.len == 0 or guard >= 10) break;
+                guard += 1;
+                zzui.emoji.emoji(ui, item, 22);
+            }
+            recents.end();
+        }
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -651,6 +685,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-13")) return runShot(13);
     if (hasFlag(cmdline, "--shot-12")) return runShot(12);
     if (hasFlag(cmdline, "--shot-11")) return runShot(11);
     if (hasFlag(cmdline, "--shot-10")) return runShot(10);

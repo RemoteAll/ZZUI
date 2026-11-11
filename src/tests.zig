@@ -42,6 +42,7 @@ test {
     _ = @import("tests_social.zig");
     _ = @import("tests_graph.zig");
     _ = @import("tests_nodes.zig");
+    _ = @import("tests_emoji.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

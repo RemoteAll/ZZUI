@@ -53,6 +53,8 @@ pub const Node = struct {
     bold: bool = false,
     /// 斜体（markdown 的 `*italic*`）。测量按正体宽度算（斜体宽度几乎相同）。
     italic: bool = false,
+    /// 用平台的 emoji 字体画（Win32 = "Segoe UI Emoji"）。
+    emoji: bool = false,
     /// 构建时的裁剪矩形（零尺寸 = 不裁剪）。
     clip: ?t.Rect = null,
     /// 构建时的层号（主树 0，浮层从 1 起）。
@@ -77,6 +79,8 @@ pub const TextCmd = struct {
     mono: bool = false,
     bold: bool = false,
     italic: bool = false,
+    /// 用平台的 emoji 字体画（Win32 选 "Segoe UI Emoji"，才出得来彩色字形）。
+    emoji: bool = false,
 };
 
 pub const LineCmd = struct {
@@ -581,6 +585,13 @@ pub const Context = struct {
         _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color, .bold = bold, .italic = italic });
     }
 
+    /// 用**平台 emoji 字体**画文本（Win32 = "Segoe UI Emoji"）。
+    /// 走同一套文本节点/指令，只是带 `emoji` 标记；没有该字体的平台会落回系统回退。
+    /// 注意：GDI 的 `TextOut` 只能出单色字形，彩色 emoji 需要 DirectWrite（本后端未接）。
+    pub fn addEmojiText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {
+        _ = self.addNode(.{ .kind = .text, .rect = rect, .text = s, .font_size = size, .text_color = color, .emoji = true });
+    }
+
     /// 画位图（BGRA，顶行在前）。`radius > 0` 时做圆角/圆形遮罩（头像就是 radius = 边长/2）。
     /// 框架**不解码**图片格式：像素由调用方提供（解码是应用层的选择，避免把 291 KB 的
     /// stb_image 拖进产物）。位图走**独立通道**，不进 `Command` 联合体（见 `ImageCmd` 注释）。
@@ -888,7 +899,7 @@ pub const Context = struct {
                     if (n.border_width > 0 and n.border.a > 0) self.pushBorder(n.rect, n.border_width, n.border, n.clip, n.layer);
                 },
                 .text => {
-                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer, .mono = n.mono, .bold = n.bold, .italic = n.italic } });
+                    self.push(.{ .text = .{ .rect = n.rect, .text = n.text, .size = n.font_size, .color = n.text_color, .clip = n.clip, .layer = n.layer, .mono = n.mono, .bold = n.bold, .italic = n.italic, .emoji = n.emoji } });
                 },
             }
         }

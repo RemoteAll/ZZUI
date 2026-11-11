@@ -13,6 +13,8 @@ const cls_main = std.unicode.utf8ToUtf16LeStringLiteral("ZZUIMain");
 const face_ui = std.unicode.utf8ToUtf16LeStringLiteral("Microsoft YaHei UI");
 /// 等宽字体（代码块 / 十六进制视图）；Consolas 是 Win7+ 自带的等宽字体。
 const face_mono = std.unicode.utf8ToUtf16LeStringLiteral("Consolas");
+/// 彩色 emoji 字体（Win10 起是 COLR/CPAL，GDI 能直接画出彩色字形）。
+const face_emoji = std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI Emoji");
 
 var g_mouse: t.Point = .{};
 var g_down: bool = false;
@@ -297,7 +299,7 @@ pub const Backend = struct {
 
     pub fn measure(self: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         const dc = self.hdc_mem orelse return .{ .w = 0, .h = size_px * 1.35 };
-        const font = self.fontFor(size_px, false, bold, false) orelse return .{ .w = 0, .h = size_px * 1.35 };
+        const font = self.fontFor(size_px, false, bold, false, false) orelse return .{ .w = 0, .h = size_px * 1.35 };
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, s);
         const old = w.SelectObject(dc, font) orelse return .{ .w = 0, .h = size_px * 1.35 };
@@ -311,7 +313,7 @@ pub const Backend = struct {
     }
 
     fn drawTextCmd(self: *Backend, dc: w.HDC, c: core.TextCmd) void {
-        const font = self.fontFor(c.size, c.mono, c.bold, c.italic) orelse return;
+        const font = self.fontFor(c.size, c.mono, c.bold, c.italic, c.emoji) orelse return;
         var buf: [512]u16 = undefined;
         const ws = w.narrowToWide(&buf, c.text);
         const old = w.SelectObject(dc, font) orelse return;
@@ -336,15 +338,16 @@ pub const Backend = struct {
         _ = w.SelectObject(dc, old);
     }
 
-    fn fontFor(self: *Backend, size_px: f32, mono: bool, bold: bool, italic: bool) ?w.HFONT {
+    fn fontFor(self: *Backend, size_px: f32, mono: bool, bold: bool, italic: bool, emoji: bool) ?w.HFONT {
         const weight: i32 = if (bold or size_px >= 20) 600 else 400;
         const key = size_px * 1000 + @as(f32, @floatFromInt(weight)) +
-            (if (mono) @as(f32, 500_000) else 0) + (if (italic) @as(f32, 200_000) else 0);
+            (if (mono) @as(f32, 500_000) else 0) + (if (italic) @as(f32, 200_000) else 0) +
+            (if (emoji) @as(f32, 700_000) else 0);
         for (&self.fonts) |*slot| {
             if (slot.font != null and slot.key == key) return slot.font;
         }
         const height: i32 = -@as(i32, @intFromFloat(@round(size_px * self.dpi)));
-        const face = if (mono) face_mono else face_ui;
+        const face = if (emoji) face_emoji else if (mono) face_mono else face_ui;
         const italic_flag: u32 = if (italic) 1 else 0;
         const font = w.CreateFontW(height, 0, 0, 0, weight, italic_flag, 0, 0, 1, 0, 0, 0, 0, face);
         for (&self.fonts) |*slot| {
