@@ -44,6 +44,7 @@ pub const tour = @import("tour.zig");
 pub const regex = @import("regex.zig");
 pub const files = @import("files.zig");
 pub const trace = @import("trace.zig");
+pub const editor = @import("editor.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");

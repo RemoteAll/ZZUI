@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -86,6 +86,12 @@ const State = struct {
     tr_sel: i32 = -1,
     tr_state: zzui.trace.State = .{},
     wf_sel: i32 = -1,
+    /// 代码编辑器（文本由我们持有，组件就地编辑）
+    ed_text: [editor_src.len]u8 = editor_src.*,
+    ed_len: usize = editor_src.len,
+    ed: zzui.editor.EditorState = .{},
+    ed_status: [96]u8 = @splat(0),
+    ed_status_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -128,6 +134,22 @@ const trace_markers = [_]zzui.trace.Marker{
     .{ .name = "GC", .time = 3.1, .tone = .warn },
     .{ .name = "deploy", .time = 8.4, .tone = .info },
 };
+
+/// 编辑器里的示例源码（可编辑）。
+const editor_src =
+    "const std = @import(\"std\");\n" ++
+    "\n" ++
+    "/// Frames a value and draws it.\n" ++
+    "pub fn frame(ui: *Context, label: []const u8) void {\n" ++
+    "    const pad = 8; // points\n" ++
+    "    if (label.len == 0) return;\n" ++
+    "    ui.addBox(rect(pad), .{ .radius = 6 });\n" ++
+    "    ui.addText(rect(pad), label, 13, theme.text);\n" ++
+    "}\n" ++
+    "\n" ++
+    "fn rect(pad: f32) Rect {\n" ++
+    "    return .{ .x = pad, .y = pad, .w = 64, .h = 20 };\n" ++
+    "}\n";
 
 /// 一次页面加载的请求（含一条 404）。
 const net_requests = [_]zzui.trace.NetRequest{
@@ -221,6 +243,29 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             .loaded = 1.28,
             .height = 300,
         });
+    } else if (st.page == 7) {
+        zzui.extras.muted(ui, "Code editor: editable, line numbers, highlighting, marks, Ctrl+F find");
+        var row = ui.row(.{ .gap = 8 });
+        if (zzui.widgets.button(ui, "Go to line 5", .{})) zzui.editor.gotoLine(&st.ed, 5, 5);
+        if (zzui.widgets.button(ui, "Find 'rect'", .{})) zzui.editor.find(&st.ed, "rect");
+        if (zzui.widgets.button(ui, "Select line 1", .{})) zzui.editor.select(&st.ed, 0, 36);
+        row.end();
+        const marks = [_]zzui.editor.TextMark{
+            .{ .start = @intCast(std.mem.indexOf(u8, editor_src, "frame") orelse 0), .end = @intCast((std.mem.indexOf(u8, editor_src, "frame") orelse 0) + 5), .color = 1 },
+            .{ .start = @intCast(std.mem.indexOf(u8, editor_src, "radius") orelse 0), .end = @intCast((std.mem.indexOf(u8, editor_src, "radius") orelse 0) + 6), .color = 2 },
+        };
+        const r = zzui.editor.codeEditor(ui, "docs-ed", st.ed_text[0..], &st.ed_len, &st.ed, .{
+            .lang = "zig",
+            .height = 300,
+            .marks = marks[0..],
+            .placeholder = "Type code here",
+        });
+        var sb: [96]u8 = undefined;
+        const status = std.fmt.bufPrint(sb[0..], "Ln {d}, Col {d}  -  {d} lines, {d} bytes  -  {d} matches", .{
+            r.line, r.column, r.line_count, r.length, r.find_matches,
+        }) catch "";
+        zzui.extras.muted(ui, ui.frameStr(status));
+        if (r.bracket_match >= 0) zzui.extras.muted(ui, "bracket pair found next to the caret");
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -253,6 +298,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-7")) return runShot(7);
     if (hasFlag(cmdline, "--shot-6")) return runShot(6);
     if (hasFlag(cmdline, "--shot-5")) return runShot(5);
     if (hasFlag(cmdline, "--shot-4")) return runShot(4);

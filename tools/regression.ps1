@@ -118,8 +118,9 @@ $pickersLimit = 260096
 # gallery 从 334,336 涨到 366,080，顶穿 335,872 门槛），单独出产物。
 # 同日再增文件浏览器族（files.zig + 平台层 listDir + Win32 FindFirstFileW）后实测 268,288 B；
 # 同日再增追踪视图 + 网络瀑布（trace.zig，C 档 flame 6/6）后实测 299,008 B，
-# 门槛由 278,528 抬到 307,200（+2.7% 余量）。依据见 docs/决策记录.md。
-$docsLimit = 307200
+# 同日再增代码编辑器（editor.zig，C 档 cui_editor.c 4/4）后实测 316,416 B，
+# 门槛由 307,200 抬到 325,632（+2.9% 余量）。依据见 docs/决策记录.md。
+$docsLimit = 325632
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -358,8 +359,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
         Check "docs:once-size" $false "bmp not written"
     }
 
-    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布
-    foreach ($pg in 0, 1, 2, 3, 4, 5, 6) {
+    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布；页 7 = 代码编辑器
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -390,7 +391,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             }
             # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
             # 火焰图/引导页大块是彩色或压暗，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } else { 40 }
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -413,6 +414,9 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                     # 另外表格里的 404 行是红色 → 红像素、以及表格蓝底强调色都要有
                     Check "docs:page6-colors" ($hued -gt 2500) ("hued=" + $hued)
                     Check "docs:page6-red-unsafe" ($redbg -gt 20) ("redbg=" + $redbg)
+                } elseif ($pg -eq 7) {
+                    # 代码编辑器：关键字/字符串/数字三种语法色 → 成片彩色；行号槽是灰底
+                    Check "docs:page7-syntax" ($hued -gt 1200) ("hued=" + $hued)
                 } else {
                     # 文件浏览器：文件夹是强调色实心块 → 成片的强调色像素（窗口里没有其它蓝）
                     Check "docs:page5-folders" ($accent -gt 150) ("accent=" + $accent)
