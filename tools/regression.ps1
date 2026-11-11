@@ -135,7 +135,7 @@ $pickersLimit = 260096
 # 抬到 512,000（+2.6%）。
 # 同日再增开发面板（devtools.zig 前三块：键值编辑器 / 问题面板 / 流水线；第 17 页）后实测 523,776 B，
 # 抬到 537,600（+2.6%）。
-$docsLimit = 537600
+$docsLimit = 557056
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -375,7 +375,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
     }
 
     # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布；页 7 = 代码编辑器；页 8 = 规划（看板/周历/甘特）；页 9 = 终端；页 10 = 会话（聊天/评论/在线）；页 11 = 图族（提交图/依赖图）；页 12 = 节点编辑器；页 13 = emoji 选择器；页 14 = AI 界面族；页 15 = 开发者视图；页 16 = 开发面板
-    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) {
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -406,7 +406,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             }
             # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
             # 火焰图/引导页大块是彩色或压暗，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } elseif ($pg -eq 8) { 150 } elseif ($pg -eq 9) { 150 } elseif ($pg -eq 10) { 300 } elseif ($pg -eq 11) { 200 } elseif ($pg -eq 12) { 60 } elseif ($pg -eq 13) { 400 } elseif ($pg -eq 14) { 150 } elseif ($pg -eq 15) { 120 } elseif ($pg -eq 16) { 250 } else { 40 }
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } elseif ($pg -eq 8) { 150 } elseif ($pg -eq 9) { 150 } elseif ($pg -eq 10) { 300 } elseif ($pg -eq 11) { 200 } elseif ($pg -eq 12) { 60 } elseif ($pg -eq 13) { 400 } elseif ($pg -eq 14) { 150 } elseif ($pg -eq 15) { 120 } elseif ($pg -eq 16) { 250 } elseif ($pg -eq 17) { 200 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -465,7 +465,13 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                     # 开发面板：问题面板的红/黄/蓝严重度 + 流水线的绿/蓝/灰作业块
                     Check "docs:page16-severity" ($redbg -gt 800) ("redbg=" + $redbg)
                     Check "docs:page16-tones" ($greenbg -gt 2000) ("greenbg=" + $greenbg)
-                } else {
+                } elseif ($pg -eq 17) {
+                    # 客户端面板：出错行的淡红高亮 + POST 徽标绿 + Send 按钮/开关的蓝
+                    Check "docs:page17-error" ($redbg -gt 1500) ("redbg=" + $redbg)
+                    Check "docs:page17-tones" ($greenbg -gt 1000) ("greenbg=" + $greenbg)
+                    Check "docs:page17-accent" ($accent -gt 800) ("accent=" + $accent)
+                    Check "docs:page17-colors" ($hued -gt 3000) ("hued=" + $hued)
+                } elseif ($pg -eq 5) {
                     # 文件浏览器：文件夹是强调色实心块 → 成片的强调色像素（窗口里没有其它蓝）
                     Check "docs:page5-folders" ($accent -gt 150) ("accent=" + $accent)
                 }

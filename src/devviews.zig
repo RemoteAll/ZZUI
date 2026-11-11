@@ -56,7 +56,7 @@ fn mix(a: t.Color, b: t.Color, k: f32) t.Color {
     };
 }
 
-fn clipText(ui: *core.Context, s: []const u8, size: f32, max_w: f32) []const u8 {
+pub fn clipText(ui: *core.Context, s: []const u8, size: f32, max_w: f32) []const u8 {
     if (s.len == 0 or max_w <= 12) return "";
     if (ui.measureText(s, size).w <= max_w) return s;
     var take: usize = @min(s.len, 64);

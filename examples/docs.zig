@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev", "Panels" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev", "Panels", "Client" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -172,6 +172,19 @@ const State = struct {
     dt_pl_sel: i32 = -1,
     dt_last: [80]u8 = @splat(0),
     dt_last_len: usize = 0,
+    /// 客户端调试面板（调用栈 / 请求栏 / 开关矩阵 / API 浏览）
+    dp_stk: zzui.devpanels.StackTraceState = .{},
+    dp_flg: zzui.devpanels.FeatureFlagsState = .{},
+    dp_api: zzui.devpanels.ApiExplorerState = .{},
+    dp_api_sel: i32 = -1,
+    dp_method: zzui.devpanels.Method = .get,
+    dp_url: [256]u8 = @splat(0),
+    dp_url_len: usize = 0,
+    dp_caret: usize = 0,
+    dp_loading: bool = false,
+    dp_ready: bool = false,
+    dp_last: [96]u8 = @splat(0),
+    dp_last_len: usize = 0,
 };
 
 /// 正则测试器的样本文本。
@@ -269,6 +282,49 @@ const net_requests = [_]zzui.trace.NetRequest{
     .{ .name = "/api/session", .method = "POST", .status = 201, .type = "json", .size = 640, .start = 0.62, .timing = .{ 0, 0, 0.024, 0.044, 0.210, 0.012 } },
     .{ .name = "/logo.png", .method = "GET", .status = 404, .type = "image", .size = 0, .start = 0.88, .timing = .{ 0, 0.010, 0.022, 0.038, 0.048, 0.004 } },
     .{ .name = "/fonts/inter.woff2", .method = "GET", .status = 200, .type = "font", .size = 34_208, .start = 1.05, .timing = .{ 0.02, 0, 0.034, 0.052, 0.076, 0.126 } },
+};
+
+/// 客户端调试页的异常调用栈（顶部帧带源码，中间是一段库帧）。
+const dp_src = [_][]const u8{
+    "  const user = data.user;",
+    "  return user.name;",
+    "}",
+};
+
+const dp_frames = [_]zzui.devpanels.StackFrame{
+    .{ .function = "renderProfile", .file = "src/profile.ts", .line = 41, .column = 10, .source = dp_src[0..], .source_first = 40 },
+    .{ .function = "readField", .file = "node_modules/runtime/field.js", .line = 12, .external = true },
+    .{ .function = "invoke", .file = "node_modules/runtime/invoke.js", .line = 88, .external = true },
+    .{ .function = "main", .file = "src/main.ts", .line = 7, .column = 3 },
+};
+
+/// 三个环境上的两枚开关（灰度用百分数）。
+const dp_envs = [_][]const u8{ "dev", "staging", "prod" };
+
+var dp_flags = [_]zzui.devpanels.FeatureFlag{
+    .{ .key = "new-checkout", .description = "Single page checkout", .on = @splat(false), .rollout = @splat(100) },
+    .{ .key = "fast-search", .description = "Vector search backend", .on = @splat(false), .rollout = @splat(100) },
+};
+
+fn dpInitFlags() void {
+    dp_flags[0].on[0] = true;
+    dp_flags[0].on[1] = true;
+    dp_flags[0].rollout[1] = 25;
+    dp_flags[1].on[0] = true;
+    dp_flags[1].rollout[0] = 50;
+}
+
+/// API 浏览的端点（含一条废弃的与一条无参数的）。
+const dp_params_users = [_]zzui.devpanels.ApiParam{
+    .{ .name = "id", .in = "path", .type = "string", .required = true, .description = "user id" },
+    .{ .name = "expand", .in = "query", .type = "string", .description = "relations to inline" },
+};
+
+const dp_endpoints = [_]zzui.devpanels.ApiEndpoint{
+    .{ .method = "GET", .path = "/users/{id}", .summary = "Read a user", .tag = "Users", .params = dp_params_users[0..] },
+    .{ .method = "DELETE", .path = "/users/{id}", .summary = "Delete a user", .tag = "Users", .deprecated = true },
+    .{ .method = "POST", .path = "/orders", .summary = "Create an order", .tag = "Orders" },
+    .{ .method = "GET", .path = "/orders/{id}/items", .summary = "List order items", .tag = "Orders" },
 };
 
 fn build(ui: *zzui.core.Context, st: *State) void {
@@ -770,6 +826,72 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             st.dt_last_len = n;
         }
         if (st.dt_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.dt_last[0..st.dt_last_len]));
+    } else if (st.page == 17) {
+        zzui.extras.muted(ui, "Client panels: stack (click a frame), request bar (Enter sends), flags and an API browser");
+        if (!st.dp_ready) {
+            dpInitFlags();
+            st.dp_ready = true;
+            st.dp_stk.open = 0;
+            st.dp_api.open = 0;
+            const u = "https://api.example.com/users?page=2&expand=orders";
+            @memcpy(st.dp_url[0..u.len], u);
+            st.dp_url_len = u.len;
+            st.dp_caret = u.len;
+        }
+        const sk = zzui.devpanels.stackTrace(ui, "docs-stk", dp_frames[0..], &st.dp_stk, .{
+            .title = "TypeError",
+            .message = "Cannot read properties of undefined",
+            .lang = "typescript",
+        });
+        if (sk.copy) {
+            const msg = "trace copied to clipboard";
+            @memcpy(st.dp_last[0..msg.len], msg);
+            st.dp_last_len = msg.len;
+        } else if (sk.clicked >= 0) {
+            const msg = dp_frames[@intCast(sk.clicked)].function;
+            const n = @min(msg.len, st.dp_last.len);
+            @memcpy(st.dp_last[0..n], msg[0..n]);
+            st.dp_last_len = n;
+        }
+        zzui.widgets.separator(ui);
+        const rq = zzui.devpanels.requestBar(ui, "docs-rq", &st.dp_method, st.dp_url[0..], &st.dp_url_len, &st.dp_caret, .{ .loading = st.dp_loading });
+        if (rq.send) {
+            const msg = "sending GET " ++ "/users";
+            const n = @min(msg.len, st.dp_last.len);
+            @memcpy(st.dp_last[0..n], msg[0..n]);
+            st.dp_last_len = n;
+        }
+        if (rq.cancel) st.dp_loading = false;
+        zzui.devpanels.responseStatus(ui, 200, 0.042, 8_412);
+        zzui.devpanels.responseStatus(ui, 404, 0.118, 0);
+        if (st.dp_url_len > 0) {
+            var pairs: [8]zzui.devtools.KvPair = @splat(.{});
+            const n = zzui.devpanels.urlParams(st.dp_url[0..st.dp_url_len], pairs[0..]);
+            zzui.widgets.textInt(ui, "query params = ", @intCast(n), "");
+        }
+        zzui.widgets.separator(ui);
+        const fl = zzui.devpanels.featureFlags(ui, "docs-flag", dp_flags[0..], dp_envs[0..], &st.dp_flg, .{ .height = 116 });
+        if (fl.flag >= 0) {
+            var nb: [72]u8 = undefined;
+            const msg = std.fmt.bufPrint(nb[0..], "{s} @ {s}", .{ dp_flags[@intCast(fl.flag)].key, dp_envs[@intCast(fl.env)] }) catch "flag";
+            @memcpy(st.dp_last[0..msg.len], msg);
+            st.dp_last_len = msg.len;
+        }
+        zzui.widgets.separator(ui);
+        const ap = zzui.devpanels.apiExplorer(ui, "docs-api", dp_endpoints[0..], &st.dp_api, .{ .height = 230, .selected = &st.dp_api_sel });
+        if (ap.try_it >= 0) {
+            var nb: [96]u8 = undefined;
+            const e = dp_endpoints[@intCast(ap.try_it)];
+            const msg = std.fmt.bufPrint(nb[0..], "try it: {s} {s}", .{ e.method, e.path }) catch "try it";
+            @memcpy(st.dp_last[0..msg.len], msg);
+            st.dp_last_len = msg.len;
+        } else if (ap.clicked >= 0) {
+            const msg = dp_endpoints[@intCast(ap.clicked)].path;
+            const n = @min(msg.len, st.dp_last.len);
+            @memcpy(st.dp_last[0..n], msg[0..n]);
+            st.dp_last_len = n;
+        }
+        if (st.dp_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.dp_last[0..st.dp_last_len]));
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -967,6 +1089,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-17")) return runShot(17);
     if (hasFlag(cmdline, "--shot-16")) return runShot(16);
     if (hasFlag(cmdline, "--shot-15")) return runShot(15);
     if (hasFlag(cmdline, "--shot-14")) return runShot(14);

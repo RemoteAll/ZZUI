@@ -47,7 +47,7 @@ fn clipText(ui: *core.Context, s: []const u8, size: f32, max_w: f32) []const u8 
 }
 
 /// ASCII 大小写不敏感的子串查找（空 `needle` 恒真）。
-fn containsCi(hay: []const u8, needle: []const u8) bool {
+pub fn containsCi(hay: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (needle.len > hay.len) return false;
     var i: usize = 0;
@@ -451,7 +451,7 @@ pub fn problems(ui: *core.Context, id: []const u8, diags: []const Diagnostic, st
 
     // ---- 计数（过滤前）
     var total = [4]i32{ 0, 0, 0, 0 };
-    for (diags) |d| total[@intFromEnum(d.severity)] += 1;
+    for (diags) |d| total[@backingInt(d.severity)] += 1;
 
     // ---- 过滤 + 分组（保留首次出现的顺序）
     var gname: [MAX_FILES][]const u8 = @splat("");
@@ -462,7 +462,7 @@ pub fn problems(ui: *core.Context, id: []const u8, diags: []const Diagnostic, st
     var npass: usize = 0;
     var shown: i32 = 0;
     for (diags, 0..) |d, i| {
-        if (!st.show[@intFromEnum(d.severity)]) continue;
+        if (!st.show[@backingInt(d.severity)]) continue;
         moved: {
             if (!containsCi(d.message, query) and !containsCi(d.code, query) and !containsCi(d.file, query) and !containsCi(d.source, query)) break :moved;
             shown += 1;
@@ -498,7 +498,7 @@ pub fn problems(ui: *core.Context, id: []const u8, diags: []const Diagnostic, st
         defer r.end();
         var k: usize = 0;
         while (k < 4) : (k += 1) {
-            const sev: Severity = @enumFromInt(k);
+            const sev: Severity = @fromBackingInt(@intCast(k));
             const label_w = ui.measureText(sevGlyph(sev), theme.font_small).w;
             var cnt_buf: [8]u8 = undefined;
             const cnt = num.int(cnt_buf[0..], total[k]);
