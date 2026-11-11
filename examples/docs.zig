@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -69,9 +69,22 @@ const State = struct {
     notes: [notes_md.len]u8 = notes_md.*,
     flame_view: zzui.flame.View = .{},
     flame_selected: i32 = -1,
+    /// 引导当前步骤（-1 = 未开始）。
+    tour_step: i32 = -1,
+    /// 正则测试器：模式与文本（调用方持有，可编辑）。
+    re_pattern: [32]u8 = @splat(0),
+    re_pattern_len: usize = 0,
+    re_caret: usize = 0,
 };
 
 /// 一段合成 profile：main → parse/render → 各自的子调用。
+/// 正则测试器的样本文本。
+const re_sample =
+    "Release 2.4 (2026-11-11)\n" ++
+    "Contact: dev@example.com or ops@example.com\n" ++
+    "Build: zig build -Doptimize=ReleaseSmall\n" ++
+    "Tag: v2.4.0, commit 91cbf17\n";
+
 const flame_spans = [_]zzui.flame.Span{
     .{ .name = "main", .start = 0.0, .end = 16.0, .depth = 0 },
     .{ .name = "parse", .start = 0.0, .end = 6.4, .depth = 1 },
@@ -86,8 +99,7 @@ const flame_spans = [_]zzui.flame.Span{
     .{ .name = "glyphs", .start = 11.0, .end = 13.8, .depth = 4 },
 };
 
-fn build(ui: *zzui.core.Context, st: *State) void {
-    var col = ui.column(.{ .pad = 24, .gap = 14 });
+fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .pad = 24, .gap = 14 });
     defer col.end();
 
     zzui.widgets.heading(ui, "Docs", 2);
@@ -117,7 +129,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         });
         zzui.widgets.textInt(ui, "changes = ", @intCast(r.changes), "");
         zzui.widgets.textInt(ui, "current = ", @intCast(@max(r.current, 0)), "");
-    } else {
+    } else if (st.page == 2) {
         var spans: [flame_spans.len]zzui.flame.Span = flame_spans;
         zzui.flame.sortSpans(spans[0..]);
         _ = zzui.flame.flameGraph(ui, "fl", spans[0..], &st.flame_view, &st.flame_selected, .{
@@ -126,13 +138,54 @@ fn build(ui: *zzui.core.Context, st: *State) void {
         });
         zzui.widgets.textInt(ui, "selected = ", @intCast(@max(st.flame_selected, 0)), "");
         zzui.extras.muted(ui, "wheel zooms, drag pans, click selects, double-click zooms to a span, Home fits");
+    } else if (st.page == 3) {
+        zzui.extras.muted(ui, "Guided tour: a spotlight on one control at a time (Esc ends it)");
+        if (zzui.widgets.button(ui, "Start the tour", .{ .variant = .primary })) st.tour_step = 0;
+        zzui.widgets.separator(ui);
+        _ = zzui.widgets.button(ui, "Export", .{});
+        var on = true;
+        zzui.widgets.checkbox(ui, "Auto save", &on);
+        _ = zzui.widgets.input(ui, "Project name", &st.re_pattern, &st.re_pattern_len, &st.re_caret, .{ .placeholder = "my-project" });
+    } else {
+        zzui.extras.muted(ui, "Regex: type a pattern, every match in the text is listed");
+        _ = zzui.widgets.input(ui, "pattern", &st.re_pattern, &st.re_pattern_len, &st.re_caret, .{ .placeholder = "\\w+@\\w+" });
+        const pat = st.re_pattern[0..st.re_pattern_len];
+        var m = zzui.regex.Match{};
+        const r = zzui.regex.search(pat, zzui.regex.ICASE, re_sample, 0, &m, null);
+        switch (r) {
+            .invalid_pattern => zzui.extras.badge(ui, "invalid pattern", .danger),
+            .none => zzui.extras.muted(ui, "no match"),
+            .too_slow => zzui.extras.badge(ui, "too slow", .warn),
+            .found => {
+                zzui.widgets.textInt(ui, "first match at ", @intCast(m.start), "");
+                if (m.start >= 0 and m.end > m.start) {
+                    zzui.extras.code(ui, re_sample[@intCast(m.start)..@intCast(m.end)]);
+                }
+                if (m.groups > 0) zzui.widgets.textInt(ui, "groups = ", @intCast(m.groups), "");
+            },
+        }
+        zzui.widgets.separator(ui);
+        _ = ui.textRun(re_sample, zzui.theme.font_body, zzui.theme.secondary);
     }
+}
+
+/// 引导在页面内容之后跑（它要压在所有东西之上）。
+fn buildOverlays(ui: *zzui.core.Context, st: *State) void {
+    if (st.page != 3 or st.tour_step < 0) return;
+    const tile_id = zzui.core.Context.idOf("Export") ^ 0x9E3779B97F4A7C15;
+    const steps = [_]zzui.tour.Step{
+        .{ .target = tile_id, .title = "Export", .body = "Saves the current project as a zip you can share." },
+        .{ .title = "That's it", .body = "A centered card with no target works too." },
+    };
+    _ = zzui.tour.tour(ui, "docs-tour", steps[0..], &st.tour_step, .{ .width = 280 });
 }
 
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-4")) return runShot(4);
+    if (hasFlag(cmdline, "--shot-3")) return runShot(3);
     if (hasFlag(cmdline, "--shot-2")) return runShot(2);
     if (hasFlag(cmdline, "--shot-1")) return runShot(1);
     if (hasFlag(cmdline, "--shot")) return runShot(0);
@@ -142,6 +195,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     defer app.deinit();
     while (app.next()) {
         build(&app.ui, &st);
+        buildOverlays(&app.ui, &st);
         app.end();
     }
     return 0;
@@ -153,6 +207,7 @@ fn runOnce() i32 {
     if (!app.next()) return 3;
     var st = State{};
     build(&app.ui, &st);
+    buildOverlays(&app.ui, &st);
     app.end();
     if (app.ui.overflowed) return 8;
     zzui.bmpfile.saveBmp("zzui-docs.bmp", app.backend.pixels(), 760, 1000) catch return 4;
@@ -164,10 +219,13 @@ fn runShot(page: usize) i32 {
     defer app.deinit();
     var st = State{};
     st.page = page;
+    // 截图时把引导直接打开，否则只能拍到未启动的样子
+    if (page == 3) st.tour_step = 0;
     var n: usize = 0;
     while (n < 3) : (n += 1) {
         if (!app.next()) return 6;
         build(&app.ui, &st);
+        buildOverlays(&app.ui, &st);
         app.end();
     }
     var buf: [64]u8 = @splat(0);

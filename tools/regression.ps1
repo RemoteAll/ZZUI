@@ -113,9 +113,9 @@ $galleryLimit = 335872
 $pickersLimit = 253952
 # docs 于 2026-11-11 新增（markdown + diff 两族）：不塞 gallery（实测塞进去会让
 # gallery 从 334,336 涨到 366,080，顶穿 335,872 门槛），单独出产物。
-# 同日新增火焰图族（flameGraph / sortSpans / spanRect）后实测 220,672 B，
-# 门槛由 217,088 抬到 229,376（+4% 余量）。依据见 docs/决策记录.md。
-$docsLimit = 229376
+# 同日陆续加火焰图 / 引导 / 正则引擎（后者自写回溯引擎约 12 KB）后实测 241,152 B，
+# 门槛由 229,376 抬到 249,856（+3.6% 余量）。依据见 docs/决策记录.md。
+$docsLimit = 249856
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -354,9 +354,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
         Check "docs:once-size" $false "bmp not written"
     }
 
-    # 页 0 = markdown（标题/列表/任务框/代码块/表格/引用）；页 1 = diff（红绿底 + 行号）；
-    # 页 2 = 火焰图（彩色条 + 时间刻度）
-    foreach ($pg in 0, 1, 2) {
+    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导（压暗 + 聚光 + 卡片）；页 4 = 正则
+    foreach ($pg in 0, 1, 2, 3, 4) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -370,6 +369,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             $greenbg = 0
             $accent = 0
             $hued = 0
+            $shaded = 0
             for ($y = 20; $y -lt [Math]::Min(900, $gh); $y += 2) {
                 for ($x = 20; $x -lt [Math]::Min(700, $gw); $x += 2) {
                     $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
@@ -381,11 +381,12 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                     $mx = [Math]::Max($rr, [Math]::Max($gg, $bb))
                     $mn = [Math]::Min($rr, [Math]::Min($gg, $bb))
                     if (($mx - $mn) -gt 25) { $hued++ }
+                    if ($rr -gt 90 -and $rr -lt 190 -and $mx - $mn -lt 8) { $shaded++ }
                 }
             }
-            # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200），门限单独给；
-            # 火焰图页是彩色块 + 少量标签，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } else { 40 }
+            # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
+            # 火焰图/引导页大块是彩色或压暗，暗像素更少。
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -395,8 +396,15 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                 Check "docs:page1-red" ($redbg -gt 400) ("redbg=" + $redbg)
                 Check "docs:page1-green" ($greenbg -gt 400) ("greenbg=" + $greenbg)
             } else {
-                # 火焰图：条按名字哈希取色 → 一大片「有饱和度」的像素（不是灰底也不是纯白）
-                Check "docs:page2-colors" ($hued -gt 3000) ("hued=" + $hued)
+                # 火焰图：条按名字哈希取色 → 一大片「有饱和度」的像素
+                if ($pg -eq 2) {
+                    Check "docs:page2-colors" ($hued -gt 3000) ("hued=" + $hued)
+                } elseif ($pg -eq 3) {
+                    # 引导：整窗被压暗 → 一中灰像素；无压暗时浅底不会出现
+                    Check "docs:page3-shade" ($shaded -gt 20000) ("shaded=" + $shaded)
+                } else {
+                    Check "docs:page4-textok" ($hued -gt 100) ("hued=" + $hued)
+                }
             }
         } else {
             Check "docs:page$pg-text" $false "bmp not written"

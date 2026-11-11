@@ -361,6 +361,9 @@ pub const Context = struct {
     track_n: usize = 0,
     /// 本帧时间（秒），由 App 每帧写入。
     time: f64 = 0,
+    /// 界面文案表（`strings.zig`）：月名/星期名/「今天」。null = 英文。
+    /// 只存指针（调用方持有表），每帧读取 —— 换语言就是一次调用。
+    strings: ?*const @import("strings.zig").Strings = null,
     /// 帧内字符串池：控件里拼出来的文本（如数字）要拷进来，否则节点会持有失效的栈切片。
     text_pool: [MAX_TEXT_POOL]u8 = undefined,
     text_pool_len: usize = 0,

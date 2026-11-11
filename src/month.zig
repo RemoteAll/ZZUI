@@ -8,6 +8,7 @@ const theme = @import("theme.zig");
 const extras = @import("extras.zig");
 const num = @import("num.zig");
 const t = @import("types.zig");
+const strings = @import("strings.zig");
 
 pub const Date = struct {
     year: i32 = 1970,
@@ -56,12 +57,6 @@ pub fn weekdayOf(d: Date) u8 {
     return @intCast(@mod(days + 3, 7));
 }
 
-const month_names_en = [_][]const u8{
-    "January", "February", "March",     "April",   "May",      "June",
-    "July",    "August",   "September", "October", "November", "December",
-};
-const weekday_names_en = [_][]const u8{ "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
-
 pub const MonthEvent = struct {
     title: []const u8,
     start: Date,
@@ -96,18 +91,18 @@ pub const MonthResult = struct {
     month_changed: bool = false,
 };
 
-fn monthName(opts: MonthOpts, m: u8) []const u8 {
+fn monthName(ui: *core.Context, opts: MonthOpts, m: u8) []const u8 {
     if (opts.month_names) |names| {
         if (m >= 1 and m <= 12 and m <= names.len) return names[m - 1];
     }
-    return month_names_en[(if (m >= 1 and m <= 12) m - 1 else 0)];
+    return strings.monthName(ui, m);
 }
 
-fn dayName(opts: MonthOpts, i: usize) []const u8 {
+fn dayName(ui: *core.Context, opts: MonthOpts, i: usize) []const u8 {
     if (opts.day_names) |names| {
         if (i < names.len) return names[i];
     }
-    return weekday_names_en[i];
+    return strings.weekdayMin(ui, i);
 }
 
 /// 月历（CUI `cui_month_calendar`）：标题 + 星期行 + 6×7 网格 + 事件条。
@@ -143,7 +138,7 @@ pub fn monthCalendar(
             b[n] = ' ';
             n += 1;
         }
-        for (monthName(opts, month.month)) |c| {
+        for (monthName(ui, opts, month.month)) |c| {
             if (n < b.len) {
                 b[n] = c;
                 n += 1;
@@ -220,10 +215,10 @@ pub fn monthCalendar(
         const idx = (@as(usize, opts.first_weekday) + wi) % 7;
         const x = rect.x + @as(f32, @floatFromInt(wi)) * (cell_w + gap);
         const y = rect.y + header_h;
-        const dm = ui.measureText(dayName(opts, idx), theme.font_small);
+        const dm = ui.measureText(dayName(ui, opts, idx), theme.font_small);
         ui.addText(
             .{ .x = x + (cell_w - dm.w) / 2, .y = y + (weekday_h - dm.h) / 2, .w = dm.w, .h = dm.h },
-            dayName(opts, idx),
+            dayName(ui, opts, idx),
             theme.font_small,
             theme.secondary,
         );
