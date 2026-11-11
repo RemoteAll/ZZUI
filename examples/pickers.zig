@@ -10,7 +10,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Inputs", "Graphs", "Upload" };
+const page_names = [_][]const u8{ "Inputs", "Graphs", "Upload", "Photos" };
 
 const State = struct {
     page: usize = 0,
@@ -50,6 +50,11 @@ const State = struct {
     dropped_path: [260]u8 = @splat(0),
     dropped_len: usize = 0,
     uploaded: u32 = 0,
+    // 图片查看 / 裁剪
+    view: zzui.photo.ImageView = .{},
+    vdrag: zzui.photo.Drag = .{},
+    crop: zzui.types.Rect = .{ .x = 2, .y = 2, .w = 12, .h = 12 },
+    cdrag: zzui.photo.CropDrag = .{},
 };
 
 const multi_items = [_][]const u8{ "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel" };
@@ -158,8 +163,51 @@ fn pageUpload(ui: *zzui.core.Context, st: *State) void {
     _ = zzui.upload.dropzone(ui, "dz2", .{ .compact = true, .title = "Replace file", .accept = "zip" });
 }
 
-fn build(ui: *zzui.core.Context, st: *State) void {
-    var col = ui.column(.{ .pad = 24, .gap = 14 });
+fn pagePhotos(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Image viewer (wheel to zoom at the cursor, drag to pan, toolbar to step)");
+    _ = zzui.photo.imageViewer(ui, "pv", avatar_src, &st.view, &st.vdrag, .{
+        .height = 260,
+        .checkerboard = true,
+    });
+    var zb: [12]u8 = undefined;
+    zzui.extras.muted(ui, ui.frameStr(zzui.num.percent(&zb, if (st.view.isFit()) 1 else st.view.zoom / 16)));
+
+    zzui.extras.muted(ui, "Cropper (drag inside to move, corners to resize, arrow keys to nudge)");
+    _ = zzui.photo.cropper(ui, "pc", avatar_src, &st.crop, &st.cdrag, .{ .height = 240, .aspect = 1 });
+    var cb: [40]u8 = @splat(0);
+    var cn: usize = 0;
+    const parts = [_]struct { k: u8, v: f32 }{
+        .{ .k = 'x', .v = st.crop.x },
+        .{ .k = 'y', .v = st.crop.y },
+        .{ .k = 'w', .v = st.crop.w },
+        .{ .k = 'h', .v = st.crop.h },
+    };
+    for (parts) |p| {
+        if (cn < cb.len) {
+            cb[cn] = p.k;
+            cn += 1;
+        }
+        if (cn < cb.len) {
+            cb[cn] = ':';
+            cn += 1;
+        }
+        var fb: [10]u8 = undefined;
+        const fs2 = zzui.num.fixed(&fb, p.v, 1);
+        for (fs2) |c| {
+            if (cn < cb.len) {
+                cb[cn] = c;
+                cn += 1;
+            }
+        }
+        if (cn < cb.len) {
+            cb[cn] = ' ';
+            cn += 1;
+        }
+    }
+    zzui.extras.code(ui, ui.frameStr(cb[0..cn]));
+}
+
+fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .pad = 24, .gap = 14 });
     defer col.end();
 
     zzui.widgets.heading(ui, "Pickers", 2);
@@ -172,13 +220,15 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     switch (st.page) {
         0 => pageInputs(ui, st),
         1 => pageGraphs(ui, st),
-        else => pageUpload(ui, st),
+        2 => pageUpload(ui, st),
+        else => pagePhotos(ui, st),
     }
 }
 
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-3")) return runShot(3);
     if (hasFlag(cmdline, "--shot-2")) return runShot(2);
     if (hasFlag(cmdline, "--shot-1")) return runShot(1);
     if (hasFlag(cmdline, "--shot")) return runShot(0);
@@ -238,6 +288,7 @@ fn runShot(page: usize) i32 {
     switch (page) {
         1 => app.saveSurface("zzui-pickers-shot1.bmp") catch return 7,
         2 => app.saveSurface("zzui-pickers-shot2.bmp") catch return 7,
+        3 => app.saveSurface("zzui-pickers-shot3.bmp") catch return 7,
         else => app.saveSurface("zzui-pickers-shot.bmp") catch return 7,
     }
     return 0;

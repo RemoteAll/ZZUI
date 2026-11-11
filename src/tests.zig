@@ -22,6 +22,7 @@ test {
     _ = @import("tests_pickers.zig");
     _ = @import("tests_platform.zig");
     _ = @import("tests_upload.zig");
+    _ = @import("tests_photo.zig");
 }
 
 test "checkbox toggles on click (last-frame hit test)" {

@@ -617,7 +617,11 @@ pub const Context = struct {
         out.focused = focusable and self.focus_id == id;
         if (self.input.pressed and out.hover) self.active_id = id;
         out.dragging = self.active_id == id and self.input.down;
-        out.pressed = self.active_id == id and self.input.down;
+        // `pressed` = **本帧刚刚按下**（只 true 一帧）；按住期间只能用 `dragging`。
+        // 曾经这里是 `active_id == id and down`（拖动期间恒 true），
+        // 导致「记录拖动起点」的控件每帧把起点重写成当前鼠标 → 位移恒 0（拖不动）。
+        // 滚轮 / 刻度尺 / 签名板 / 图片查看器 / 裁剪框一共踩了五次，故从语义上根治。
+        out.pressed = self.input.pressed and out.hover and self.active_id == id;
         out.clicked = self.click_target == id;
         if (out.clicked) self.focus_id = id;
         out.activated = out.focused and (self.input.keyPressed(.space) or self.input.keyPressed(.enter));
