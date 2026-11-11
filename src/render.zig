@@ -9,7 +9,7 @@ const theme = @import("theme.zig");
 pub fn render(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f32, layer: u8) void {
     if (layer == 0) clear(pixels, width, height, theme.bg);
     var i: usize = 0;
-    while (i < ui.cmd_count) : (i += 1) {
+    while (i < ui.overlay_base) : (i += 1) {
         switch (ui.cmds[i]) {
             .rect => |c| {
                 if (c.layer == layer) fillRoundRect(pixels, width, height, c.rect, c.radius, c.color, c.clip, scale);
@@ -22,12 +22,29 @@ pub fn render(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f
     }
 }
 
-/// 位图画（独立通道）：在矩形/线段之后、文本之前，逐层调用。
+/// 位图画（独立通道）：在矩形/线段之后、覆盖层与文本之前，逐层调用。
 pub fn renderImages(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f32, layer: u8) void {
     var i: usize = 0;
     while (i < ui.image_count) : (i += 1) {
         const c = ui.images[i];
         if (c.layer == layer) blitImage(pixels, width, height, c, scale);
+    }
+}
+
+/// 覆盖层（`addOverlayLine` / `addOverlayBox`）：在位图**之后**、文本之前。
+/// 每层顺序是 rect/line → image → overlay → text；文本最后，且 GDI 文本不吃 alpha。
+pub fn renderOverlays(ui: *core.Context, pixels: []u8, width: u32, height: u32, scale: f32, layer: u8) void {
+    var i: usize = ui.overlay_base;
+    while (i < ui.cmd_count) : (i += 1) {
+        switch (ui.cmds[i]) {
+            .rect => |c| {
+                if (c.layer == layer) fillRoundRect(pixels, width, height, c.rect, c.radius, c.color, c.clip, scale);
+            },
+            .line => |c| {
+                if (c.layer == layer) drawLine(pixels, width, height, c.from, c.to, c.width, c.color, c.clip, scale);
+            },
+            .text => {},
+        }
     }
 }
 

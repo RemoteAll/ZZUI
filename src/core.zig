@@ -285,8 +285,11 @@ pub const Context = struct {
     focus_curr_n: usize = 0,
     focus_id: u64 = 0,
     active_id: u64 = 0,
-    /// 当前浮层层号（主树 0）；点击只给最上层的命中项。
+    /// 浮层层号（主树 0）；点击只给最上层的命中项。
     overlay_layer: u8 = 0,
+    /// `cmds` 里「节点指令」与「覆盖层指令」的分界：前段在 `render` 画，后段在 `renderOverlays` 画。
+    /// 分两段是因为位图（`renderImages`）夹在中间：覆盖层必须能压在位图**之上**。
+    overlay_base: usize = 0,
     overlay_backdrop_clicked: bool = false,
     click_target: u64 = 0,
     /// 当前裁剪矩形（null = 不裁剪）。
@@ -756,20 +759,44 @@ pub const Context = struct {
                 },
             }
         }
+        // 覆盖层接在节点之后：`render` 只画前段，`renderOverlays` 画后段（位图之后）。
+        self.overlay_base = self.cmd_count;
         i = 0;
         while (i < self.overlay_count) : (i += 1) {
             self.push(self.overlays[i]);
         }
     }
 
-    /// 覆盖层线段：在节点之后绘制（勾、焦点环等）。
-    pub fn addOverlayLine(self: *Context, from: t.Point, to: t.Point, width: f32, color: t.Color) void {
+    fn pushOverlay(self: *Context, cmd: Command) void {
         if (self.overlay_count >= MAX_OVERLAYS) {
             self.markOverflow("overlays");
             return;
         }
-        self.overlays[self.overlay_count] = .{ .line = .{ .from = from, .to = to, .width = width, .color = color, .clip = self.clip, .layer = self.overlay_layer } };
+        self.overlays[self.overlay_count] = cmd;
         self.overlay_count += 1;
+    }
+
+    /// 覆盖层线段：在位图**之后**绘制（勾、焦点环、裁剪框等）。
+    pub fn addOverlayLine(self: *Context, from: t.Point, to: t.Point, width: f32, color: t.Color) void {
+        self.pushOverlay(.{ .line = .{ .from = from, .to = to, .width = width, .color = color, .clip = self.clip, .layer = self.overlay_layer } });
+    }
+
+    /// 覆盖层矩形：与 `addOverlayLine` 同一条「位图之后」的通道。
+    /// **不要用 `addBox` 往位图上压东西** —— 位图走独立通道、在矩形之后绘制，`addBox` 会被盖掉。
+    pub fn addOverlayBox(self: *Context, rect: t.Rect, opts: BoxOpts) void {
+        const layer = self.overlay_layer;
+        if (opts.fill) |f| {
+            if (f.a > 0) self.pushOverlay(.{ .rect = .{ .rect = rect, .radius = opts.radius, .color = f, .clip = self.clip, .layer = layer } });
+        }
+        if (opts.border) |b| {
+            const w = if (opts.border_width > 0) opts.border_width else 1;
+            if (b.a > 0) {
+                self.pushOverlay(.{ .rect = .{ .rect = .{ .x = rect.x, .y = rect.y, .w = rect.w, .h = w }, .radius = 0, .color = b, .clip = self.clip, .layer = layer } });
+                self.pushOverlay(.{ .rect = .{ .rect = .{ .x = rect.x, .y = rect.y + rect.h - w, .w = rect.w, .h = w }, .radius = 0, .color = b, .clip = self.clip, .layer = layer } });
+                self.pushOverlay(.{ .rect = .{ .rect = .{ .x = rect.x, .y = rect.y, .w = w, .h = rect.h }, .radius = 0, .color = b, .clip = self.clip, .layer = layer } });
+                self.pushOverlay(.{ .rect = .{ .rect = .{ .x = rect.x + rect.w - w, .y = rect.y, .w = w, .h = rect.h }, .radius = 0, .color = b, .clip = self.clip, .layer = layer } });
+            }
+        }
     }
 
     fn pushBorder(self: *Context, r: t.Rect, w: f32, c: t.Color, clip: ?t.Rect, layer: u8) void {

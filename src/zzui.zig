@@ -23,6 +23,7 @@ pub const dockspace = @import("dockspace.zig");
 pub const pickers = @import("pickers.zig");
 pub const upload = @import("upload.zig");
 pub const photo = @import("photo.zig");
+pub const media = @import("media.zig");
 pub const charts = @import("charts.zig");
 pub const chrome = @import("chrome.zig");
 pub const disclosure = @import("disclosure.zig");
@@ -105,6 +106,7 @@ pub const App = struct {
         while (layer <= self.ui.max_layer) : (layer += 1) {
             render.render(&self.ui, self.backend.pixels(), wpx, hpx, s, layer);
             render.renderImages(&self.ui, self.backend.pixels(), wpx, hpx, s, layer);
+            render.renderOverlays(&self.ui, self.backend.pixels(), wpx, hpx, s, layer);
             self.backend.drawTextLayer(&self.ui, layer);
         }
         self.backend.present();

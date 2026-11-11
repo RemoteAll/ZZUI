@@ -13,6 +13,8 @@ zig-out/
 *.log
 *.ini.local
 zzui-hello.bmp
+# 截图是 --once / --shot 的产物，随时可重出，不入库（2026-11-11 起停止跟踪）
+zzui-*.bmp
 
 # ---- 验证/打包产物（保留源码与脚本，不提交二进制与截图）----
 dist/

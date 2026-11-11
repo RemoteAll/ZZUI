@@ -25,25 +25,17 @@ fn clampF(v: f32, lo: f32, hi: f32) f32 {
     return v;
 }
 
-/// 用一条粗 overlay 线填满矩形。
-/// **为什么不用 `addBox`**：位图走独立通道（`renderImages`），在 `render` 之后绘制，
-/// 会把同一层的普通矩形全盖住 —— 裁剪框的压暗、边框、三分线必须走 overlay 通道
-/// （`paint` 把 overlays 追加在 cmds 末尾）才能出现在位图**之上**。实测踩过：
-/// 用 addBox 画裁剪框，截图里什么都看不到。
+/// 在位图**之上**压一层半透明/边框：必须走覆盖层通道。
+/// 每层的绘制顺序是 rect/line（`render`）→ image（`renderImages`）→ overlay
+/// （`renderOverlays`）→ text，所以 `addBox` 画的压暗、边框、三分线会被位图整个盖掉
+/// （2026-11-11 实测：用 addBox 的裁剪框在截图里完全不可见）。
 fn fillBand(ui: *core.Context, r: t.Rect, color: t.Color) void {
     if (r.w <= 0 or r.h <= 0) return;
-    if (r.w >= r.h) {
-        ui.addOverlayLine(.{ .x = r.x, .y = r.y + r.h / 2 }, .{ .x = r.x + r.w, .y = r.y + r.h / 2 }, r.h, color);
-    } else {
-        ui.addOverlayLine(.{ .x = r.x + r.w / 2, .y = r.y }, .{ .x = r.x + r.w / 2, .y = r.y + r.h }, r.w, color);
-    }
+    ui.addOverlayBox(r, .{ .fill = color });
 }
 
 fn strokeRect(ui: *core.Context, r: t.Rect, w: f32, color: t.Color) void {
-    fillBand(ui, .{ .x = r.x, .y = r.y, .w = r.w, .h = w }, color);
-    fillBand(ui, .{ .x = r.x, .y = r.y + r.h - w, .w = r.w, .h = w }, color);
-    fillBand(ui, .{ .x = r.x, .y = r.y, .w = w, .h = r.h }, color);
-    fillBand(ui, .{ .x = r.x + r.w - w, .y = r.y, .w = w, .h = r.h }, color);
+    ui.addOverlayBox(r, .{ .border = color, .border_width = w });
 }
 
 /// 拖动过程的临时状态（缩放平移与裁剪共用一套）。
@@ -221,17 +213,19 @@ pub fn imageViewer(
     const changed = view.zoom != before.zoom or view.cx != before.cx or view.cy != before.cy;
 
     // ---- 绘制
+    // 裁剪必须**还原到父级**，不能硬置 null（在 scroll 里会把滚动视口的裁剪也去掉）
+    const outer_clip = ui.clip;
     if (opts.checkerboard) {
         ui.clip = rect;
         drawCheckerboard(ui, rect);
-        ui.clip = null;
+        ui.clip = outer_clip;
     } else {
         ui.addBox(rect, .{ .fill = theme.surface, .radius = 6 });
     }
     const f = fitInside(rect, src, view.*);
     ui.clip = rect;
     ui.addImage(f.rect, src, 0);
-    ui.clip = null;
+    ui.clip = outer_clip;
     ui.addBox(rect, .{ .border = theme.border, .radius = 6 });
 
     if (opts.no_toolbar) return changed;
@@ -424,6 +418,7 @@ pub fn cropper(
 
     // ---- 绘制
     ui.addBox(rect, .{ .fill = theme.surface, .radius = 6 });
+    const outer_clip = ui.clip;
     ui.clip = rect;
     ui.addImage(img, src, 0);
 
@@ -479,7 +474,7 @@ pub fn cropper(
             ui.addOverlayLine(c0, .{ .x = c0.x, .y = c0.y + sy }, 4, theme.accent);
         }
     }
-    ui.clip = null;
+    ui.clip = outer_clip;
     ui.addBox(rect, .{ .border = theme.border, .radius = 6 });
     return changed;
 }

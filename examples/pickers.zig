@@ -1,16 +1,16 @@
-//! 选择器族样例（对位 CUI `cui_pickers.c`）：多选 / 区间日历 / 日期区间 / 时分 /
-//! 滚轮 / 表盘 / 刻度尺 / 直方图 / 签名板 / 拖放 / 头像上传。
+//! 选择器族样例（对位 CUI `cui_pickers.c` / `cui_media.c`）：多选 / 区间日历 / 日期区间 / 时分 /
+//! 滚轮 / 表盘 / 刻度尺 / 直方图 / 签名板 / 拖放 / 头像上传 / 图片查看裁剪 / 媒体动效。
 //!
 //! 单独一个产物（不塞进 gallery）：选择器族代码量大，塞进 gallery 会顶穿它的体积门槛。
-//! **分 3 页**：单页全画会吃光 `MAX_NODES`（实测 `--shot-2` 溢出退出码 8），
+//! **分 5 页**：单页全画会吃光 `MAX_NODES`（实测 `--shot-2` 溢出退出码 8），
 //! 按页构建才稳（和 gallery 同一套路）。
 //!
 //! `--once` 无窗口渲染写 `zzui-pickers.bmp`；`--shot-N` 真渲染（含系统字体）写
-//! `zzui-pickers-shotN.bmp`（N = 0/1/2，不带 N 等同 0）。
+//! `zzui-pickers-shotN.bmp`（N = 0/1/2/3/4，不带 N 等同 0）。
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Inputs", "Graphs", "Upload", "Photos" };
+const page_names = [_][]const u8{ "Inputs", "Graphs", "Upload", "Photos", "Media" };
 
 const State = struct {
     page: usize = 0,
@@ -55,6 +55,15 @@ const State = struct {
     vdrag: zzui.photo.Drag = .{},
     crop: zzui.types.Rect = .{ .x = 2, .y = 2, .w = 12, .h = 12 },
     cdrag: zzui.photo.CropDrag = .{},
+    // 媒体动效
+    car: zzui.media.CarouselState = .{},
+    cmp: zzui.media.CompareState = .{},
+    deck: zzui.media.CardStackState = .{},
+    deck_index: usize = 0,
+    odo: zzui.media.CounterState = .{},
+    odo2: zzui.media.CounterState = .{},
+    odo_value: f64 = 48210,
+    tk: zzui.media.TickerState = .{},
 };
 
 const multi_items = [_][]const u8{ "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel" };
@@ -80,6 +89,33 @@ const avatar_img = blk: {
     break :blk px;
 };
 const avatar_src = zzui.core.ImageSrc{ .pixels = &avatar_img, .w = 16, .h = 16 };
+
+/// 对比用的「处理前」图像：同心方环（与头像截然不同，一眼能看出分割）。
+const before_img = blk: {
+    var px: [16 * 16 * 4]u8 = undefined;
+    for (0..16) |y| {
+        for (0..16) |x| {
+            const i = (y * 16 + x) * 4;
+            const ring = (@max(@max(x, 15 - x), @max(y, 15 - y)) / 3) % 2;
+            const v: u8 = if (ring == 0) 235 else 120;
+            px[i] = v;
+            px[i + 1] = v;
+            px[i + 2] = v;
+            px[i + 3] = 0xFF;
+        }
+    }
+    break :blk px;
+};
+const before_src = zzui.core.ImageSrc{ .pixels = &before_img, .w = 16, .h = 16 };
+
+const slide_titles = [_][]const u8{ "Overview", "Signals", "Revenue" };
+const deck_titles = [_][]const u8{ "#4821 pending", "#4822 shipped", "#4823 draft" };
+const ticker_items = [_]zzui.media.TickerItem{
+    .{ .label = "cpu", .value = "12%", .delta = -1.5, .lower_is_better = true },
+    .{ .label = "rps", .value = "820", .delta = 3.2 },
+    .{ .label = "p99", .value = "48ms", .delta = -6.4, .lower_is_better = true },
+    .{ .label = "errors", .value = "0.02%", .delta = 0.4 },
+};
 
 fn pageInputs(ui: *zzui.core.Context, st: *State) void {
     zzui.extras.muted(ui, "Multi-select (searchable, chips collapse to +N)");
@@ -207,7 +243,69 @@ fn pagePhotos(ui: *zzui.core.Context, st: *State) void {
     zzui.extras.code(ui, ui.frameStr(cb[0..cn]));
 }
 
-fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .pad = 24, .gap = 14 });
+fn pageMedia(ui: *zzui.core.Context, st: *State) void {
+    zzui.extras.muted(ui, "Carousel (drag, wheel or arrow keys; dots jump to a slide)");
+    {
+        var car = zzui.media.carousel(ui, "car", slide_titles.len, &st.car, .{ .height = 120, .loop = true });
+        for (slide_titles, 0..) |title, i| {
+            const r = car.slideRect(i) orelse continue;
+            var s = ui.panel(r, .{
+                .pad = 14,
+                .gap = 6,
+                .fill = zzui.theme.bg,
+                .radius = 10,
+                .border = zzui.theme.border,
+            });
+            zzui.widgets.heading(ui, title, 3);
+            zzui.widgets.secondary(ui, "The caller draws whatever it wants inside slideRect().");
+            s.end();
+        }
+        car.end();
+    }
+
+    zzui.extras.muted(ui, "Image compare (drag the handle, arrow keys when focused)");
+    _ = zzui.media.imageCompare(ui, "cmp", before_src, avatar_src, &st.cmp, .{
+        .height = 140,
+        .before_label = "Original",
+        .after_label = "Processed",
+    });
+
+    zzui.extras.muted(ui, "Card stack (drag the top card away, or use arrow keys)");
+    {
+        var cs = zzui.media.cardStack(ui, "deck", deck_titles.len, &st.deck, .{ .height = 100, .width = 320 });
+        var d: usize = cs.visible;
+        while (d > 0) {
+            d -= 1;
+            const idx = (st.deck_index + d) % deck_titles.len;
+            var s = ui.panel(cs.cardRect(d), .{
+                .pad = 12,
+                .fill = zzui.theme.surface,
+                .radius = 12,
+                .border = zzui.theme.border,
+            });
+            // 深层卡片只露出一条边（内容会被上面那张盖住，所以只给最上面那张画）
+            if (d == 0) zzui.widgets.secondary(ui, deck_titles[idx]);
+            s.end();
+        }
+        if (cs.end() != 0) st.deck_index = (st.deck_index + 1) % deck_titles.len;
+    }
+
+    zzui.extras.muted(ui, "Odometer counters (digits roll towards their target)");
+    {
+        var row = ui.row(.{ .gap = 28 });
+        defer row.end();
+        zzui.media.counter(ui, "odo1", st.odo_value, &st.odo, .{ .size = 28, .group_thousands = true, .suffix = " req" });
+        zzui.media.counter(ui, "odo2", 1234.5, &st.odo2, .{ .size = 28, .decimals = 2, .group_thousands = true, .prefix = "$" });
+    }
+
+    zzui.extras.muted(ui, "Ticker (scrolls while idle, pauses on hover)");
+    zzui.media.ticker(ui, "tk", ticker_items[0..], &st.tk, .{ .height = 40 });
+
+    if (zzui.widgets.button(ui, "Bump counters", .{})) st.odo_value += 1234;
+}
+
+fn build(ui: *zzui.core.Context, st: *State) void {
+    var col = ui.column(.{ .pad = 24, .gap = 14 });
     defer col.end();
 
     zzui.widgets.heading(ui, "Pickers", 2);
@@ -221,13 +319,15 @@ fn build(ui: *zzui.core.Context, st: *State) void {    var col = ui.column(.{ .p
         0 => pageInputs(ui, st),
         1 => pageGraphs(ui, st),
         2 => pageUpload(ui, st),
-        else => pagePhotos(ui, st),
+        3 => pagePhotos(ui, st),
+        else => pageMedia(ui, st),
     }
 }
 
 pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdline: [*:0]u16, _: i32) callconv(.winapi) i32 {
     _ = hinstance;
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-4")) return runShot(4);
     if (hasFlag(cmdline, "--shot-3")) return runShot(3);
     if (hasFlag(cmdline, "--shot-2")) return runShot(2);
     if (hasFlag(cmdline, "--shot-1")) return runShot(1);
@@ -289,6 +389,7 @@ fn runShot(page: usize) i32 {
         1 => app.saveSurface("zzui-pickers-shot1.bmp") catch return 7,
         2 => app.saveSurface("zzui-pickers-shot2.bmp") catch return 7,
         3 => app.saveSurface("zzui-pickers-shot3.bmp") catch return 7,
+        4 => app.saveSurface("zzui-pickers-shot4.bmp") catch return 7,
         else => app.saveSurface("zzui-pickers-shot.bmp") catch return 7,
     }
     return 0;

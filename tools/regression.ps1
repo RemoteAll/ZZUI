@@ -105,7 +105,9 @@ Write-Host "== 1.3 size gate (hello = CUI baseline 303104 B; gallery = full-cont
 #   pickers = 选择器族单独产物（不塞 gallery，否则 gallery 会顶穿门槛）
 $helloLimit = 303104
 $galleryLimit = 327680
-$pickersLimit = 229376
+# pickers 于 2026-11-11 新增媒体族（5 控件 + 渲染分层基础设施）后实测 241,152 B；
+# 门槛由 229,376 抬到 253,952（+5% 余量），依据已写进 docs/决策记录.md。
+$pickersLimit = 253952
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
@@ -183,7 +185,7 @@ if (Test-Path 'zig-out/bin/zzui-hello-x64.exe') {
     Skip "shot" "zzui-hello-x64.exe not found"
 }
 
-Write-Host "== 1.6 gallery (12 pages, all families) =="
+Write-Host "== 1.6 gallery (13 pages, all families) =="
 if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     $tmp3 = Join-Path $env:TEMP 'zzui-regression'
     if (-not (Test-Path $tmp3)) { New-Item -ItemType Directory -Path $tmp3 -Force | Out-Null }
@@ -226,7 +228,7 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     Skip "gallery" "zzui-gallery-x64.exe not found"
 }
 
-Write-Host "== 1.7 pickers example (--once / --shot-0..3, four pages) =="
+Write-Host "== 1.7 pickers example (--once / --shot-0..4, five pages) =="
 if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
     $tmp4 = Join-Path $env:TEMP 'zzui-regression-pickers'
     if (-not (Test-Path $tmp4)) { New-Item -ItemType Directory -Path $tmp4 -Force | Out-Null }
@@ -245,7 +247,7 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
     # 页 1 = Graphs（表盘/刻度尺/直方图/签名板，矢量为主）；
     # 页 2 = Upload（头像位图 + 拖放区）；
     # 页 3 = Photos（图片查看器 + 裁剪框）。
-    foreach ($pg in 0, 1, 2, 3) {
+    foreach ($pg in 0, 1, 2, 3, 4) {
         if ($pg -eq 0) {
             $pbmp = Join-Path $tmp4 'zzui-pickers-shot.bmp'
             $flag = '--shot'
@@ -255,9 +257,12 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
         } elseif ($pg -eq 2) {
             $pbmp = Join-Path $tmp4 'zzui-pickers-shot2.bmp'
             $flag = '--shot-2'
-        } else {
+        } elseif ($pg -eq 3) {
             $pbmp = Join-Path $tmp4 'zzui-pickers-shot3.bmp'
             $flag = '--shot-3'
+        } else {
+            $pbmp = Join-Path $tmp4 'zzui-pickers-shot4.bmp'
+            $flag = '--shot-4'
         }
         Remove-Item $pbmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-pickers-x64.exe') @($flag) $tmp4
@@ -275,11 +280,12 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
                     if ($g[$off] -eq 0xEB -and $g[$off+1] -eq 0x63 -and $g[$off+2] -eq 0x25) { $accent++ }
                 }
             }
-            # 页 0（日历/多选/滚轮）文字密集；页 1/2 以矢量图形与位图为主，
+            # 页 0（日历/多选/滚轮）文字密集；页 1/2/3 以矢量图形与位图为主，
             # 文字天然少 → 文字门槛按页取，另外用强调色像素证明控件真的画了。
             $textGate = if ($pg -eq 0) { 200 } else { 60 }
-            # 页 3 以位图为主，强调色只出现在裁剪框的 2px 边线上 → 门槛单独给。
-            $accentGate = if ($pg -eq 3) { 20 } else { 40 }
+            # 页 3 以位图为主，强调色只出现在裁剪框的 2px 边线上 → 门槛单独给；
+            # 页 4（媒体族）的控件本身不用强调色（分割柄/圆点都是中性色），只剩标签页下划线 → 同样低门槛。
+            $accentGate = if ($pg -eq 3 -or $pg -eq 4) { 20 } else { 40 }
             Check "pickers:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             Check "pickers:page$pg-accent" ($accent -gt $accentGate) ("accent=" + $accent + " gate=" + $accentGate)
             # 页 2 的头像是**真位图**（渐变，蓝红分量差很大）：证明图像通道真的上屏了，
@@ -304,6 +310,17 @@ if (Test-Path 'zig-out/bin/zzui-pickers-x64.exe') {
                     }
                 }
                 Check "pickers:page3-bitmap" ($colored -gt 200) ("colored=" + $colored)
+            } elseif ($pg -eq 4) {
+                # 页 4 的图片对比把渐变位图铺满控件（cover）→ 彩色像素一大片
+                $colored = 0
+                for ($y = 100; $y -lt 900; $y += 2) {
+                    for ($x = 20; $x -lt 740; $x += 2) {
+                        $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                        $db = [int]$g[$off] - [int]$g[$off+2]
+                        if ($db -gt 30 -or $db -lt -30) { $colored++ }
+                    }
+                }
+                Check "pickers:page4-bitmap" ($colored -gt 2000) ("colored=" + $colored)
             }
         } else {
             Check "pickers:page$pg-text" $false "bmp not written"
