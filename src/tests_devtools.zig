@@ -3,6 +3,7 @@
 const std = @import("std");
 const core = @import("core.zig");
 const devtools = @import("devtools.zig");
+const month = @import("month.zig");
 const types = @import("types.zig");
 
 fn at(x: f32, y: f32) types.Point {
@@ -313,4 +314,329 @@ test "devtools: a stage mixing passed, failed and running renders without panic"
     var a = Agg{ .jobs = mixed[0..] };
     frame(&ui, 700, 200, &a, .{});
     try std.testing.expect(!ui.overflowed);
+}
+
+// ------------------------------------------------------------------ 查询构建
+
+const qb_fields = [_]devtools.QueryField{
+    .{ .name = "status", .type = .choice, .choices = &.{ "open", "closed" } },
+    .{ .name = "age", .type = .number },
+    .{ .name = "title", .type = .text },
+    .{ .name = "urgent", .type = .boolean },
+};
+
+var qb_nodes: [8]devtools.QueryNode = @splat(.{});
+var qb_count: usize = 1;
+
+const QbFixture = struct {
+    changed: bool = false,
+    fn draw(self: *@This(), ui: *core.Context) void {
+        self.changed = devtools.queryBuilder(ui, "qb", qb_fields[0..], qb_nodes[0..], &qb_count, .{});
+    }
+};
+
+fn seedQuery() void {
+    qb_nodes = @splat(.{});
+    qb_count = 4;
+    qb_nodes[0] = .{ .group = true };
+    qb_nodes[1] = .{ .depth = 1, .field = 1, .op = 2 };
+    qb_nodes[1].setValue("3");
+    qb_nodes[2] = .{ .depth = 1, .field = 3, .op = 0 };
+    qb_nodes[3] = .{ .depth = 1, .field = 0, .op = 0 };
+    qb_nodes[3].setValue("open");
+}
+
+test "devtools: query operators per field type" {
+    try std.testing.expectEqualStrings("contains", devtools.queryOpName(.text, 2).?);
+    try std.testing.expect(devtools.queryOpName(.text, 6) == null);
+    try std.testing.expect(devtools.queryOpName(.text, -1) == null);
+    try std.testing.expectEqualStrings("<=", devtools.queryOpName(.number, 5).?);
+    try std.testing.expectEqualStrings("is not", devtools.queryOpName(.choice, 1).?);
+    try std.testing.expectEqualStrings("is false", devtools.queryOpName(.boolean, 1).?);
+}
+
+test "devtools: query text writes rules joined by and" {
+    seedQuery();
+    var buf: [160]u8 = undefined;
+    const s = devtools.queryText(qb_fields[0..], qb_nodes[0..4], buf[0..]);
+    try std.testing.expectEqualStrings("age > 3 and urgent is true and status is open", s);
+}
+
+test "devtools: query text parenthesises nested groups" {
+    var nodes: [5]devtools.QueryNode = @splat(.{});
+    nodes[0] = .{ .group = true };
+    nodes[1] = .{ .group = true, .any = true, .depth = 1 };
+    nodes[2] = .{ .depth = 2, .field = 1, .op = 2 };
+    nodes[2].setValue("10");
+    nodes[3] = .{ .depth = 2, .field = 3, .op = 1 };
+    nodes[4] = .{ .depth = 1, .field = 0, .op = 0 };
+    nodes[4].setValue("open");
+    var buf: [200]u8 = undefined;
+    const s = devtools.queryText(qb_fields[0..], nodes[0..5], buf[0..]);
+    try std.testing.expectEqualStrings("(age > 10 or urgent is false) and status is open", s);
+}
+
+test "devtools: query matching covers text, number, choice, bool and nesting" {
+    seedQuery();
+    const yes = [_]?[]const u8{ "open", "5", "a log", "true" };
+    try std.testing.expect(devtools.queryMatch(qb_fields[0..], qb_nodes[0..4], yes[0..]));
+    const no_age = [_]?[]const u8{ "open", "2", "a log", "true" };
+    try std.testing.expect(!devtools.queryMatch(qb_fields[0..], qb_nodes[0..4], no_age[0..]));
+    const no_status = [_]?[]const u8{ "closed", "5", "a log", "true" };
+    try std.testing.expect(!devtools.queryMatch(qb_fields[0..], qb_nodes[0..4], no_status[0..]));
+
+    // 嵌套 any 组
+    qb_nodes = @splat(.{});
+    qb_nodes[0] = .{ .group = true };
+    qb_nodes[1] = .{ .group = true, .any = true, .depth = 1 };
+    qb_nodes[2] = .{ .depth = 2, .field = 1, .op = 2 };
+    qb_nodes[2].setValue("10");
+    qb_nodes[3] = .{ .depth = 2, .field = 3, .op = 1 };
+    qb_nodes[4] = .{ .depth = 1, .field = 0, .op = 0 };
+    qb_nodes[4].setValue("open");
+    const nested_true = [_]?[]const u8{ "open", "20", "x", "false" };
+    try std.testing.expect(devtools.queryMatch(qb_fields[0..], qb_nodes[0..5], nested_true[0..]));
+    const nested_false = [_]?[]const u8{ "open", "5", "x", "true" };
+    try std.testing.expect(!devtools.queryMatch(qb_fields[0..], qb_nodes[0..5], nested_false[0..]));
+
+    // 空查询匹配一切
+    try std.testing.expect(devtools.queryMatch(qb_fields[0..], qb_nodes[0..0], yes[0..]));
+}
+
+test "devtools: query builder adds a condition and flips all/any" {
+    qb_nodes = @splat(.{});
+    qb_count = 1;
+    qb_nodes[0] = .{ .group = true };
+    var ui = core.Context{};
+    var f = QbFixture{};
+    frame(&ui, 720, 320, &f, .{});
+    try std.testing.expect(!ui.overflowed);
+
+    const qkey = core.Context.idOf("qb");
+    const add_id = core.Context.idOf("+ Condition") ^ 0x9E3779B97F4A7C15 ^ kkk(qkey, 0xB500, 0);
+    const btn = ui.lastRect(add_id).?;
+    click(&ui, 720, 320, &f, btn.x + btn.w * 0.5, btn.y + btn.h * 0.5);
+    try std.testing.expectEqual(@as(usize, 2), qb_count);
+    try std.testing.expect(qb_nodes[1].depth == 1);
+    try std.testing.expect(!qb_nodes[1].group);
+
+    // All → Any
+    const jid = core.Context.idOf("qb#join0") ^ (0x5E9 + 1);
+    const seg = ui.lastRect(jid).?;
+    frame(&ui, 720, 320, &f, .{});
+    click(&ui, 720, 320, &f, seg.x + seg.w * 0.5, seg.y + seg.h * 0.5);
+    try std.testing.expect(qb_nodes[0].any);
+}
+
+// ------------------------------------------------------------------ cron / 定时选择
+
+fn utc(y: i32, m: u8, d: u8, hh: i64) i64 {
+    return month.daysFromCivil(.{ .year = y, .month = m, .day = d }) * 86400 + hh * 3600;
+}
+
+test "devtools: cron next handles steps, weekdays, months and names" {
+    const base = utc(2024, 1, 1, 0);
+    try std.testing.expectEqual(base + 15 * 60, devtools.cronNext("*/15 * * * *", base, 0).?);
+    try std.testing.expectEqual(base + 9 * 3600, devtools.cronNext("0 9 * * 1-5", base, 0).?);
+    try std.testing.expectEqual(utc(2024, 2, 1, 0), devtools.cronNext("0 0 1 * *", base, 0).?);
+    try std.testing.expectEqual(base + 9 * 3600, devtools.cronNext("0 9 * JAN-MAR mon", base, 0).?);
+    // UTC+8：09:00 当地时间 = 01:00 UTC
+    try std.testing.expectEqual(base + 3600, devtools.cronNext("0 9 * * *", base, 480).?);
+    // 非法表达式
+    try std.testing.expect(devtools.cronNext("0 0 * *", base, 0) == null);
+    try std.testing.expect(devtools.cronNext("60 0 * * *", base, 0) == null);
+    try std.testing.expect(devtools.cronNext("0 0 31 2 *", base, 0) == null);
+}
+
+test "devtools: cron describe writes a sentence" {
+    var ui = core.Context{};
+    ui.begin(400, 300);
+    try std.testing.expectEqualStrings("Every 15 minutes", devtools.cronDescribe(&ui, "*/15 * * * *").?);
+    try std.testing.expectEqualStrings("Every weekday at 09:00", devtools.cronDescribe(&ui, "0 9 * * 1-5").?);
+    try std.testing.expectEqualStrings("Every weekend at 09:00", devtools.cronDescribe(&ui, "0 9 * * 0,6").?);
+    try std.testing.expectEqualStrings("Every day at 09:00", devtools.cronDescribe(&ui, "0 9 * * *").?);
+    try std.testing.expectEqualStrings("On day 1 of every month at 00:00", devtools.cronDescribe(&ui, "0 0 1 * *").?);
+    try std.testing.expectEqualStrings("Every minute", devtools.cronDescribe(&ui, "* * * * *").?);
+    try std.testing.expect(devtools.cronDescribe(&ui, "nope") == null);
+}
+
+var sch_buf: [32]u8 = @splat(0);
+var sch_state = devtools.ScheduleState{};
+
+const SchFixture = struct {
+    res: devtools.ScheduleResult = .{},
+    fn draw(self: *@This(), ui: *core.Context) void {
+        self.res = devtools.schedulePicker(ui, "sch", sch_buf[0..], &sch_state, .{ .now = 1_704_067_200 });
+    }
+};
+
+fn seedSchedule(text: []const u8) void {
+    sch_buf = @splat(0);
+    sch_state = .{};
+    @memcpy(sch_buf[0..text.len], text);
+}
+
+test "devtools: schedule picker reads the expression into its controls" {
+    seedSchedule("*/15 * * * *");
+    var ui = core.Context{};
+    var f = SchFixture{};
+    frame(&ui, 720, 400, &f, .{});
+    try std.testing.expectEqual(@as(u8, 0), sch_state.mode);
+    try std.testing.expectEqual(@as(i32, 15), sch_state.every);
+    try std.testing.expect(f.res.valid);
+    try std.testing.expectEqual(@as(i64, 1_704_068_100), f.res.next);
+    try std.testing.expect(!ui.overflowed);
+}
+
+test "devtools: picking a mode rewrites the cron expression" {
+    seedSchedule("*/15 * * * *");
+    var ui = core.Context{};
+    var f = SchFixture{};
+    frame(&ui, 720, 400, &f, .{});
+    // 第 3 个分段 = Daily
+    const sid = core.Context.idOf("sch#mode") ^ (0x5E9 + 2);
+    const seg = ui.lastRect(sid).?;
+    click(&ui, 720, 400, &f, seg.x + seg.w * 0.5, seg.y + seg.h * 0.5);
+    try std.testing.expectEqual(@as(u8, 2), sch_state.mode);
+    try std.testing.expectEqualStrings("0 9 * * *", sch_buf[0..devtoolsZlen(sch_buf[0..])]);
+    try std.testing.expect(f.res.changed);
+    try std.testing.expectEqual(@as(i64, 1_704_099_600), f.res.next);
+}
+
+fn devtoolsZlen(buf: []const u8) usize {
+    var i: usize = 0;
+    while (i < buf.len and buf[i] != 0) i += 1;
+    return i;
+}
+
+// ------------------------------------------------------------------ 测试树
+
+const tx_items = [_]devtools.TestItem{
+    .{ .name = "core", .depth = 0 },
+    .{ .name = "adds", .depth = 1, .status = .passed, .duration = 0.5 },
+    .{ .name = "subtracts", .depth = 1, .status = .failed, .duration = 1.2, .message = "expected 1 got 2" },
+    .{ .name = "ui", .depth = 0 },
+    .{ .name = "click", .depth = 1, .status = .skipped },
+};
+
+const TxFixture = struct {
+    st: devtools.TestExplorerState = .{},
+    res: devtools.TestExplorerResult = .{},
+    fn draw(self: *@This(), ui: *core.Context) void {
+        self.res = devtools.testExplorer(ui, "tx", tx_items[0..], &self.st, .{ .height = 220 });
+    }
+};
+
+test "devtools: test explorer sums suites and counts tests" {
+    var ui = core.Context{};
+    var f = TxFixture{};
+    frame(&ui, 900, 420, &f, .{});
+    try std.testing.expectEqual(@as(i32, 1), f.res.passed);
+    try std.testing.expectEqual(@as(i32, 1), f.res.failed);
+    try std.testing.expectEqual(@as(i32, 1), f.res.skipped);
+    try std.testing.expectEqual(@as(i32, 3), f.res.total);
+    const key = core.Context.idOf("tx");
+    var i: usize = 0;
+    while (i < tx_items.len) : (i += 1) {
+        try std.testing.expect(ui.lastRect(kkk(key, 0x9200, i)) != null);
+    }
+    try std.testing.expect(!ui.overflowed);
+}
+
+test "devtools: filtering hides tests but keeps their suite" {
+    var ui = core.Context{};
+    var f = TxFixture{};
+    frame(&ui, 900, 420, &f, .{});
+    const q = "sub";
+    @memcpy(f.st.query[0..q.len], q);
+    f.st.query_len = q.len;
+    frame(&ui, 900, 420, &f, .{});
+    const key = core.Context.idOf("tx");
+    try std.testing.expect(ui.lastRect(kkk(key, 0x9200, 0)) != null); // 套件仍在
+    try std.testing.expect(ui.lastRect(kkk(key, 0x9200, 1)) == null); // adds 被过滤
+    try std.testing.expect(ui.lastRect(kkk(key, 0x9200, 2)) != null); // subtracts 命中
+    try std.testing.expectEqual(@as(i32, 3), f.res.total); // 计数仍是全部测试
+}
+
+test "devtools: folding a suite hides its tests" {
+    var ui = core.Context{};
+    var f = TxFixture{};
+    frame(&ui, 900, 420, &f, .{});
+    const key = core.Context.idOf("tx");
+    const chev = ui.lastRect(kkk(key, 0x9400, 0)).?;
+    click(&ui, 900, 420, &f, chev.x + chev.w * 0.5, chev.y + chev.h * 0.5);
+    try std.testing.expectEqual(@as(usize, 1), f.st.nfolded);
+    frame(&ui, 900, 420, &f, .{});
+    try std.testing.expect(ui.lastRect(kkk(key, 0x9200, 1)) == null);
+    try std.testing.expect(ui.lastRect(kkk(key, 0x9200, 2)) == null);
+    try std.testing.expect(ui.lastRect(kkk(key, 0x9200, 3)) != null);
+}
+
+test "devtools: selecting a test then Enter activates it" {
+    var ui = core.Context{};
+    var f = TxFixture{};
+    frame(&ui, 900, 420, &f, .{});
+    const key = core.Context.idOf("tx");
+    const row = ui.lastRect(kkk(key, 0x9200, 2)).?;
+    click(&ui, 900, 420, &f, row.x + 120, row.y + row.h * 0.5);
+    try std.testing.expectEqual(@as(i32, 2), f.st.sel);
+    var inp = types.Input{ .mouse = at(row.x + 120, row.y + row.h * 0.5) };
+    inp.addKey(.enter);
+    frame(&ui, 900, 420, &f, inp);
+    try std.testing.expectEqual(@as(i32, 2), f.res.activated);
+}
+
+// ------------------------------------------------------------------ 键位图
+
+const km_bindings = [_]devtools.KeymapBinding{
+    .{ .combo = .{ .key = .escape }, .action = "Close panel", .category = 0 },
+    .{ .combo = .{ .key = .S, .mods = .{ .ctrl = true } }, .action = "Save", .category = 0 },
+    .{ .combo = .{ .key = .S, .mods = .{ .ctrl = true } }, .action = "Save as", .category = 1 },
+    .{ .combo = .{ .key = .P, .mods = .{ .ctrl = true } }, .action = "Print", .category = 0 },
+    .{ .combo = .{ .key = .f5 }, .action = "Run", .category = 2 },
+};
+
+const km_cats = [_][]const u8{ "File", "Edit", "Run" };
+
+const KmFixture = struct {
+    st: devtools.KeymapState = .{},
+    res: devtools.KeymapResult = .{},
+    fn draw(self: *@This(), ui: *core.Context) void {
+        self.res = devtools.keymap(ui, "km", km_bindings[0..], &self.st, .{ .categories = km_cats[0..] });
+    }
+};
+
+test "devtools: keymap counts conflicts and draws the keyboard" {
+    var ui = core.Context{};
+    var f = KmFixture{};
+    frame(&ui, 900, 600, &f, .{});
+    try std.testing.expectEqual(@as(i32, 1), f.res.conflicts);
+    try std.testing.expect(ui.lastRect(kkk(core.Context.idOf("km"), 0x4B3A, 0)) != null);
+    try std.testing.expect(!ui.overflowed);
+}
+
+test "devtools: clicking a key reports it" {
+    var ui = core.Context{};
+    var f = KmFixture{};
+    frame(&ui, 900, 600, &f, .{});
+    const kb = ui.lastRect(kkk(core.Context.idOf("km"), 0x4B3A, 0)).?;
+    // 键盘按 15 键宽排布（900px 宽时装得下导航区 → 18.5），Esc 在左上角第一格
+    const avail: f32 = 900;
+    const u: f32 = @min(46, avail / 18.5);
+    const x0: f32 = @max(0, (avail - 18.5 * u) * 0.5);
+    const kx = kb.x + x0 + 2 + (u - 4) * 0.5;
+    const ky = kb.y + 2 + (u - 4) * 0.5;
+    click(&ui, 900, 600, &f, kx, ky);
+    try std.testing.expectEqual(types.Key.escape, f.res.clicked);
+}
+
+test "devtools: switching the modifier set changes what is shown" {
+    var ui = core.Context{};
+    var f = KmFixture{};
+    frame(&ui, 900, 600, &f, .{});
+    const sid = core.Context.idOf("km#mods") ^ (0x5E9 + 1);
+    const seg = ui.lastRect(sid).?;
+    click(&ui, 900, 600, &f, seg.x + seg.w * 0.5, seg.y + seg.h * 0.5);
+    try std.testing.expect(f.st.mods.ctrl);
+    try std.testing.expect(!f.st.mods.shift);
 }

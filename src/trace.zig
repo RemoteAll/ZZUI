@@ -346,7 +346,7 @@ pub fn toneColor(tone: Tone) t.Color {
     };
 }
 
-fn mixColor(a: t.Color, b: t.Color, k: f32) t.Color {
+pub fn mixColor(a: t.Color, b: t.Color, k: f32) t.Color {
     const f = if (k < 0) 0 else if (k > 1) 1 else k;
     return .{ .r = lerp8(a.r, b.r, f), .g = lerp8(a.g, b.g, f), .b = lerp8(a.b, b.b, f), .a = 255 };
 }

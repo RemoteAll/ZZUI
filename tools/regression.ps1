@@ -136,12 +136,16 @@ $pickersLimit = 260096
 # 同日再增开发面板（devtools.zig 前三块：键值编辑器 / 问题面板 / 流水线；第 17 页）后实测 523,776 B，
 # 抬到 537,600（+2.6%）。
 $docsLimit = 557056
+# devtools 于 2026-11-12 新增（C 档 cui_devtools.c 后四块：查询构建 / cron 定时 / 测试树 / 键位图）：
+# 四块约 25 KB，不塞 docs（会把 docs 顶穿 557,056）；单独出产物实测 246,272 B，门槛 253,952（+3.1%）。
+$devtoolsLimit = 253952
 $exes = @(
     @{ path = 'zig-out/bin/zzui-hello-x64.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-hello-x86.exe'; limit = $helloLimit },
     @{ path = 'zig-out/bin/zzui-gallery-x64.exe'; limit = $galleryLimit },
     @{ path = 'zig-out/bin/zzui-pickers-x64.exe'; limit = $pickersLimit },
-    @{ path = 'zig-out/bin/zzui-docs-x64.exe'; limit = $docsLimit }
+    @{ path = 'zig-out/bin/zzui-docs-x64.exe'; limit = $docsLimit },
+    @{ path = 'zig-out/bin/zzui-devtools-x64.exe'; limit = $devtoolsLimit }
 )
 foreach ($e in $exes) {
     if (Test-Path $e.path) {
@@ -528,6 +532,84 @@ if (Test-Path 'zig-out/bin/zzui-gallery-x64.exe') {
     }
 } else {
     Skip "theme" "zzui-gallery-x64.exe not found"
+}
+
+Write-Host "== 1.10 devtools example (query / schedule / tests / keymap, four pages) =="
+if (Test-Path 'zig-out/bin/zzui-devtools-x64.exe') {
+    $tmp6 = Join-Path $env:TEMP 'zzui-regression-devtools'
+    if (-not (Test-Path $tmp6)) { New-Item -ItemType Directory -Path $tmp6 -Force | Out-Null }
+    Remove-Item (Join-Path $tmp6 'zzui-devtools.bmp') -ErrorAction SilentlyContinue
+    $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-devtools-x64.exe') @('--once') $tmp6
+    Check "devtools:once-exit" ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+    $dtb = Join-Path $tmp6 'zzui-devtools.bmp'
+    if (Test-Path $dtb) {
+        $expect = 54 + 900 * 860 * 4
+        Check "devtools:once-size" ((Get-Item $dtb).Length -eq $expect) ("bytes=" + (Get-Item $dtb).Length + " expect=" + $expect)
+    } else {
+        Check "devtools:once-size" $false "bmp not written"
+    }
+
+    # 页 0 = 查询构建；页 1 = 定时选择；页 2 = 测试树；页 3 = 键位图
+    foreach ($pg in 0, 1, 2, 3) {
+        $bmp = Join-Path $tmp6 ("zzui-devtools-p" + $pg + ".bmp")
+        Remove-Item $bmp -ErrorAction SilentlyContinue
+        $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-devtools-x64.exe') @("--shot-$pg") $tmp6
+        Check ("devtools:page$pg-exit") ($r.Code -eq 0) ("exit=" + $r.Code + " " + $r.Output)
+        if (Test-Path $bmp) {
+            $g = [IO.File]::ReadAllBytes($bmp)
+            $gw = [BitConverter]::ToInt32($g, 18)
+            $gh = [BitConverter]::ToInt32($g, 22)
+            $dark = 0
+            $redbg = 0
+            $greenbg = 0
+            $accent = 0
+            $hued = 0
+            for ($y = 20; $y -lt [Math]::Min(840, $gh); $y += 2) {
+                for ($x = 20; $x -lt [Math]::Min(880, $gw); $x += 2) {
+                    $off = 54 + ($gh - 1 - $y) * $gw * 4 + $x * 4
+                    $bb = [int]$g[$off]; $gg = [int]$g[$off+1]; $rr = [int]$g[$off+2]
+                    if ($rr -lt 100 -and $gg -lt 100 -and $bb -lt 100) { $dark++ }
+                    if (($rr - $gg) -gt 3 -and $rr -gt 200) { $redbg++ }
+                    if (($gg - $rr) -gt 3 -and $gg -gt 200) { $greenbg++ }
+                    if ($bb -gt 180 -and $rr -lt 120) { $accent++ }
+                    $mx = [Math]::Max($rr, [Math]::Max($gg, $bb))
+                    $mn = [Math]::Min($rr, [Math]::Min($gg, $bb))
+                    if (($mx - $mn) -gt 25) { $hued++ }
+                }
+            }
+            if ($pg -eq 0) {
+                $gate = 150
+            } elseif ($pg -eq 1) {
+                $gate = 150
+            } elseif ($pg -eq 2) {
+                $gate = 120
+            } else {
+                $gate = 200
+            }
+            Check "devtools:page$pg-text" ($dark -gt $gate) ("dark=" + $dark + " gate=" + $gate)
+            if ($pg -eq 0) {
+                # 查询构建：All 选中块与值输入框的强调色 + 匹配徽标
+                Check "devtools:page0-accent" ($accent -gt 150) ("accent=" + $accent)
+                Check "devtools:page0-records" ($hued -gt 1200) ("hued=" + $hued)
+            } elseif ($pg -eq 1) {
+                # 定时：有效的绿点 + 选中的星期胶囊（强调色）
+                Check "devtools:page1-valid" ($greenbg -gt 800) ("greenbg=" + $greenbg)
+                Check "devtools:page1-chips" ($accent -gt 1500) ("accent=" + $accent)
+            } elseif ($pg -eq 2) {
+                # 测试树：失败行/消息的红 + 通过的绿
+                Check "devtools:page2-failed" ($redbg -gt 400) ("redbg=" + $redbg)
+                Check "devtools:page2-passed" ($greenbg -gt 600) ("greenbg=" + $greenbg)
+            } else {
+                # 键位图：分类色的键帽 + 分类图例
+                Check "devtools:page3-tones" ($hued -gt 1500) ("hued=" + $hued)
+                Check "devtools:page3-accent" ($accent -gt 150) ("accent=" + $accent)
+            }
+        } else {
+            Check "devtools:page$pg-text" $false "bmp not written"
+        }
+    }
+} else {
+    Skip "devtools" "zzui-devtools-x64.exe not found"
 }
 
 Write-Host "== 2. continuity =="

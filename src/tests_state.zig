@@ -54,17 +54,15 @@ test "state: scroll pool keeps distinct offsets for many scroll areas" {
 }
 
 test "state: focus pool overflow is observable" {
-    const widgets = @import("widgets.zig");
     var ui = core.Context{};
     ui.begin(400, 4000);
+    ui.quiet_overflow = true; // 故意造溢出：别让 8 行打印淹没其它失败
     var i: usize = 0;
-    // 造出超过焦点池的控件（按钮是 focusable）
+    // 造出超过焦点池的控件：直接调 `interactEx`（按钮还会建节点，
+    // 132 个按钮会把节点池也打爆，打印噪声淹没真正的失败原因）
     while (i < core.MAX_FOCUS + 4) : (i += 1) {
-        var buf: [12]u8 = @splat(0);
-        buf[0] = 'b';
-        buf[1] = '0' + @as(u8, @intCast(i / 10));
-        buf[2] = '0' + @as(u8, @intCast(i % 10));
-        _ = widgets.button(&ui, buf[0..3], .{});
+        const r = ui.reserve(20, 12, false);
+        _ = ui.interactEx(0x9000 + i, r, true);
     }
     try std.testing.expectEqual(core.MAX_FOCUS, ui.focus_curr_n);
     try std.testing.expect(ui.overflowed); // 溢出必须可见，不能静默截断

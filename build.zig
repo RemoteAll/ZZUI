@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "zzui-gallery-x64", .arch = .x86_64, .src = "examples/gallery.zig" },
         .{ .name = "zzui-pickers-x64", .arch = .x86_64, .src = "examples/pickers.zig" },
         .{ .name = "zzui-docs-x64", .arch = .x86_64, .src = "examples/docs.zig" },
+        .{ .name = "zzui-devtools-x64", .arch = .x86_64, .src = "examples/devtools.zig" },
     };
 
     for (specs) |spec| {

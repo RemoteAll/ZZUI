@@ -350,6 +350,9 @@ pub const Context = struct {
     wheel_used: bool = false,
     /// 本帧是否发生过容量溢出（节点/指令/线段/命中）——静默截断会让界面「莫名少画」，必须能查。
     overflowed: bool = false,
+    /// Debug 下是否不打印溢出位置。**只给故意造溢出的测试用**（否则几十行打印会淹没真正的失败原因），
+    /// 生产代码永远不要置位。
+    quiet_overflow: bool = false,
     /// 本帧是否还需要继续出帧（有动画在跑 / 有定时器在等）。
     /// `App.next` 用它做**空闲节流**：不置位且没按住鼠标时，后端直接阻塞到有输入。
     need_frame: bool = false,
@@ -380,7 +383,7 @@ pub const Context = struct {
     /// 置位溢出标记；Debug 构建额外打印来源（发布构建不留字符串）。
     fn markOverflow(self: *Context, where: []const u8) void {
         self.overflowed = true;
-        if (@import("builtin").mode == .debug) std.debug.print("[zzui] capacity overflow: {s}\n", .{where});
+        if (@import("builtin").mode == .debug and !self.quiet_overflow) std.debug.print("[zzui] capacity overflow: {s}\n", .{where});
     }
 
     pub fn begin(self: *Context, width: f32, height: f32) void {
