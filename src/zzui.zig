@@ -56,6 +56,7 @@ pub const ai = @import("ai.zig");
 pub const devviews = @import("devviews.zig");
 pub const devtools = @import("devtools.zig");
 pub const devpanels = @import("devpanels.zig");
+pub const colorpicker = @import("colorpicker.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");

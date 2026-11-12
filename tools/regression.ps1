@@ -383,8 +383,8 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
         Check "docs:once-size" $false "bmp not written"
     }
 
-    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布；页 7 = 代码编辑器；页 8 = 规划（看板/周历/甘特）；页 9 = 终端；页 10 = 会话（聊天/评论/在线）；页 11 = 图族（提交图/依赖图）；页 12 = 节点编辑器；页 13 = emoji 选择器；页 14 = AI 界面族；页 15 = 开发者视图；页 16 = 开发面板
-    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) {
+    # 页 0 = markdown；页 1 = diff；页 2 = 火焰图；页 3 = 引导；页 4 = 正则；页 5 = 文件浏览器；页 6 = 追踪 + 瀑布；页 7 = 代码编辑器；页 8 = 规划（看板/周历/甘特）；页 9 = 终端；页 10 = 会话（聊天/评论/在线）；页 11 = 图族（提交图/依赖图）；页 12 = 节点编辑器；页 13 = emoji 选择器；页 14 = AI 界面族；页 15 = 开发者视图；页 16 = 开发面板；页 17 = 客户端面板；页 18 = 颜色/主题（取色器 + 渐变/阴影/折线）
+    foreach ($pg in 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18) {
         $bmp = Join-Path $tmp5 ("zzui-docs-p" + $pg + ".bmp")
         Remove-Item $bmp -ErrorAction SilentlyContinue
         $r = Invoke-GuiExe (Join-Path $root 'zig-out/bin/zzui-docs-x64.exe') @("--shot-$pg") $tmp5
@@ -415,7 +415,7 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
             }
             # diff 页是 12px 等宽小字 + 灰色行号，暗像素天然少（实测 ≈ 200）；
             # 火焰图/引导页大块是彩色或压暗，暗像素更少。
-            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } elseif ($pg -eq 8) { 150 } elseif ($pg -eq 9) { 150 } elseif ($pg -eq 10) { 300 } elseif ($pg -eq 11) { 200 } elseif ($pg -eq 12) { 60 } elseif ($pg -eq 13) { 400 } elseif ($pg -eq 14) { 150 } elseif ($pg -eq 15) { 120 } elseif ($pg -eq 16) { 250 } elseif ($pg -eq 17) { 200 } else { 40 }
+            $textGate = if ($pg -eq 0) { 400 } elseif ($pg -eq 1) { 120 } elseif ($pg -eq 4) { 60 } elseif ($pg -eq 5) { 150 } elseif ($pg -eq 6) { 200 } elseif ($pg -eq 7) { 250 } elseif ($pg -eq 8) { 150 } elseif ($pg -eq 9) { 150 } elseif ($pg -eq 10) { 300 } elseif ($pg -eq 11) { 200 } elseif ($pg -eq 12) { 60 } elseif ($pg -eq 13) { 400 } elseif ($pg -eq 14) { 150 } elseif ($pg -eq 15) { 120 } elseif ($pg -eq 16) { 250 } elseif ($pg -eq 17) { 200 } elseif ($pg -eq 18) { 200 } else { 40 }
             Check "docs:page$pg-text" ($dark -gt $textGate) ("dark=" + $dark + " gate=" + $textGate + " size=" + $gw + "x" + $gh)
             if ($pg -eq 0) {
                 # markdown：任务框（勾选的强调色块）+ 链接下划线
@@ -480,6 +480,11 @@ if (Test-Path 'zig-out/bin/zzui-docs-x64.exe') {
                     Check "docs:page17-tones" ($greenbg -gt 1000) ("greenbg=" + $greenbg)
                     Check "docs:page17-accent" ($accent -gt 800) ("accent=" + $accent)
                     Check "docs:page17-colors" ($hued -gt 3000) ("hued=" + $hued)
+                } elseif ($pg -eq 18) {
+                    # 颜色页：8×8 SV 方块 + 色相条 → 大量有饱和度的像素；渐变条上蓝下红
+                    # （实测 hued=14329 / redbg=1072，门槛取约一半，防止误报）
+                    Check "docs:page18-ramp" ($hued -gt 8000) ("hued=" + $hued)
+                    Check "docs:page18-warm" ($redbg -gt 500) ("redbg=" + $redbg)
                 } elseif ($pg -eq 5) {
                     # 文件浏览器：文件夹是强调色实心块 → 成片的强调色像素（窗口里没有其它蓝）
                     Check "docs:page5-folders" ($accent -gt 150) ("accent=" + $accent)

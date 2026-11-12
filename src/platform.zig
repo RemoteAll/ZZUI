@@ -18,9 +18,9 @@ pub const Platform = enum { win32, null_backend };
 
 /// 后端必须提供的方法（`input` 是字段，单独检查）。
 const backend_methods = [_][]const u8{
-    "deinit",       "poll",      "size",     "scale",
-    "now",          "pixels",    "present",  "drawTextLayer",
-    "saveSurface",  "measure",   "droppedFile", "idle",
+    "deinit",       "poll",         "size",        "scale",
+    "now",          "pixels",       "present",     "drawTextLayer",
+    "saveSurface",  "measure",      "droppedFile", "idle",
     "getClipboard", "setClipboard",
 };
 

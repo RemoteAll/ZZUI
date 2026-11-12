@@ -617,10 +617,56 @@ pub const Context = struct {
 
     /// 多边形描边（对位 `cui_draw_polygon` 的描边部分；不填充）。
     pub fn addPolygon(self: *Context, points: []const t.Point, color: t.Color) void {
+        self.addPolyline(points, true, 1, color);
+    }
+
+    /// 折线（对位 `cui_draw_polyline`）：`closed` 决定是否连回首点，`thickness` 是线宽。
+    pub fn addPolyline(self: *Context, points: []const t.Point, closed: bool, thickness: f32, color: t.Color) void {
         if (points.len < 2) return;
+        const w = if (thickness > 0) thickness else 1;
         var i: usize = 1;
-        while (i < points.len) : (i += 1) self.addOverlayLine(points[i - 1], points[i], 1, color);
-        self.addOverlayLine(points[points.len - 1], points[0], 1, color);
+        while (i < points.len) : (i += 1) self.addOverlayLine(points[i - 1], points[i], w, color);
+        if (closed) self.addOverlayLine(points[points.len - 1], points[0], w, color);
+    }
+
+    /// 上下渐变圆角矩形（对位 `cui_draw_rect_gradient`）。
+    /// 软件光栅没有渐变指令，用 `strips` 条色带近似：条数越多越平滑，默认 24 条。
+    /// 只有首末两条带圆角（中间直角），圆角半径大时会看到极细的台阶。
+    pub fn addGradientBox(self: *Context, rect: t.Rect, radius: f32, top: t.Color, bottom: t.Color, strips: u8) void {
+        if (rect.w <= 0 or rect.h <= 0) return;
+        const n: usize = @max(1, strips);
+        const hh = rect.h / @as(f32, @floatFromInt(n));
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            const k = if (n == 1) 0.0 else @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(n - 1));
+            const y = rect.y + hh * @as(f32, @floatFromInt(i));
+            const h = if (i + 1 == n) rect.y + rect.h - y else hh + 0.5;
+            const r = if (i == 0 or i + 1 == n) radius else 0;
+            self.addBox(.{ .x = rect.x, .y = y, .w = rect.w, .h = h }, .{ .fill = theme.mix(top, bottom, k), .radius = r });
+        }
+    }
+
+    /// 阴影（对位 `cui_draw_shadow`）。
+    /// 用 `layers` 层逐渐放大的半透明圆角矩形近似模糊：由外向内叠，默认 6 层。
+    /// 层数越多越接近高斯，代价是每层一个矩形指令（体积/节点都按层数线性涨）。
+    pub fn addShadow(self: *Context, rect: t.Rect, radius: f32, blur: f32, spread: f32, offset: t.Point, color: t.Color, layers: u8) void {
+        const n: usize = @max(1, layers);
+        const b = if (blur > 0) blur else 0;
+        // 由外（大、淡）到内（小、深）
+        var i: usize = n;
+        while (i > 0) {
+            i -= 1;
+            const step = (@as(f32, @floatFromInt(i + 1)) / @as(f32, @floatFromInt(n)));
+            const grow = spread + b * step;
+            const a: u8 = @intFromFloat(@as(f32, @floatFromInt(color.a)) * (0.32 / @as(f32, @floatFromInt(n))) * (1.0 + step));
+            if (a == 0) continue;
+            self.addBox(.{
+                .x = rect.x + offset.x - grow,
+                .y = rect.y + offset.y - grow,
+                .w = rect.w + grow * 2,
+                .h = rect.h + grow * 2,
+            }, .{ .fill = theme.withAlpha(color, a), .radius = radius + grow });
+        }
     }
 
     pub fn addText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {

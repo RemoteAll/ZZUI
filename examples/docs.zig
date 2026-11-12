@@ -6,7 +6,7 @@
 const std = @import("std");
 const zzui = @import("zzui");
 
-const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev", "Panels", "Client" };
+const page_names = [_][]const u8{ "Markdown", "Diff", "Flame", "Tour", "Regex", "Files", "Trace", "Editor", "Planning", "Terminal", "Social", "Graph", "Nodes", "Emoji", "AI", "Dev", "Panels", "Client", "Colors" };
 
 const notes_md =
     "# Release 2.4\n" ++
@@ -185,6 +185,19 @@ const State = struct {
     dp_ready: bool = false,
     dp_last: [96]u8 = @splat(0),
     dp_last_len: usize = 0,
+    /// 颜色页（HSV 取色器 + 主题切换）
+    cl_color: zzui.types.Color = .{ .r = 0x22, .g = 0x66, .b = 0xFF, .a = 255 },
+    cl_sel: zzui.colorpicker.Sel = .light,
+};
+
+/// 取色器预设色（对位颜色选择器的常用色板）。
+const cl_presets = [_]zzui.types.Color{
+    .{ .r = 0x22, .g = 0x66, .b = 0xFF, .a = 255 },
+    .{ .r = 0x22, .g = 0xC5, .b = 0x5E, .a = 255 },
+    .{ .r = 0xF5, .g = 0x9E, .b = 0x0B, .a = 255 },
+    .{ .r = 0xEF, .g = 0x44, .b = 0x44, .a = 255 },
+    .{ .r = 0x8B, .g = 0x5C, .b = 0xF6, .a = 255 },
+    .{ .r = 0x14, .g = 0x1A, .b = 0x24, .a = 255 },
 };
 
 /// 正则测试器的样本文本。
@@ -896,6 +909,32 @@ fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) vo
             st.dp_last_len = n;
         }
         if (st.dp_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.dp_last[0..st.dp_last_len]));
+    } else if (st.page == 18) {
+        zzui.extras.muted(ui, "Colors: HSV picker (click or drag), theme switcher (applies at once), gradient / shadow / polyline primitives");
+        var row = ui.row(.{ .gap = 16 });
+        if (zzui.colorpicker.colorPicker(ui, "docs-cp", &st.cl_color, .{ .presets = cl_presets[0..] })) {
+            // 选到的颜色直接当强调色（对位 cui_theme 的可配强调色）
+            zzui.theme.setAccent(st.cl_color);
+        }
+        var col2 = ui.column(.{ .gap = 10 });
+        _ = zzui.colorpicker.themeSwitcher(ui, "docs-ts", &st.cl_sel, true);
+        zzui.extras.muted(ui, "accent follows the picked color; System only records the choice");
+        const g = ui.reserve(240, 84, false);
+        ui.addGradientBox(g, 10, zzui.theme.accent, zzui.theme.danger, 24);
+        const sh = ui.reserve(240, 56, false);
+        ui.addShadow(sh, 10, 14, 0, .{ .x = 0, .y = 6 }, .{ .r = 0, .g = 0, .b = 0, .a = 150 }, 6);
+        ui.addBox(sh, .{ .fill = zzui.theme.surface, .radius = 10, .border = zzui.theme.border });
+        const lp = ui.reserve(240, 70, false);
+        const wave = [_]zzui.types.Point{
+            .{ .x = 0, .y = 30 },   .{ .x = 40, .y = 8 },   .{ .x = 80, .y = 46 },
+            .{ .x = 120, .y = 14 }, .{ .x = 160, .y = 40 }, .{ .x = 200, .y = 20 },
+        };
+        var pts: [wave.len]zzui.types.Point = undefined;
+        for (wave, 0..) |p, i| pts[i] = .{ .x = lp.x + p.x, .y = lp.y + p.y };
+        ui.addPolyline(pts[0..], false, 2, zzui.theme.accent);
+        for (wave) |p| ui.addCircle(.{ .x = lp.x + p.x, .y = lp.y + p.y }, 3, zzui.theme.accent_active);
+        col2.end();
+        row.end();
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
@@ -1096,6 +1135,7 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     _ = hinstance;
     if (hasFlag(cmdline, "--dark")) zzui.theme.setMode(.dark);
     if (hasFlag(cmdline, "--once")) return runOnce();
+    if (hasFlag(cmdline, "--shot-18")) return runShot(18);
     if (hasFlag(cmdline, "--shot-17")) return runShot(17);
     if (hasFlag(cmdline, "--shot-16")) return runShot(16);
     if (hasFlag(cmdline, "--shot-15")) return runShot(15);
