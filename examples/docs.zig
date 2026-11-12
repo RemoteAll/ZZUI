@@ -356,6 +356,9 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             .new_title = "after.zig",
             .height = 260,
         });
+        var vr: [64]zzui.diff.ViewRow = undefined;
+        const nrows = zzui.diff.viewRows(diff_old, diff_new, .{ .context = 3 }, vr[0..], 0);
+        zzui.widgets.textInt(ui, "view rows = ", @intCast(nrows), " (folds included)");
         zzui.widgets.textInt(ui, "changes = ", @intCast(r.changes), "");
         zzui.widgets.textInt(ui, "current = ", @intCast(@max(r.current, 0)), "");
     } else if (st.page == 2) {

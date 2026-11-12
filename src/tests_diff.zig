@@ -129,3 +129,103 @@ test "diff: crlf lines compare equal to lf" {
     const res = view(&ui, "a\r\nb\r\n", "a\nb\n", null, .{ .width = 780, .ignore_eol = true });
     try std.testing.expectEqual(@as(usize, 0), res.changes);
 }
+
+test "diff: words marks the changed words of a line pair" {
+    var ra: [diff.MAX_WORD_MARKS]diff.WordRange = undefined;
+    var rb: [diff.MAX_WORD_MARKS]diff.WordRange = undefined;
+    var na: usize = 0;
+    var nb: usize = 0;
+    const a = "the quick brown fox";
+    const b = "the slow brown fox";
+    try std.testing.expect(diff.words(a, b, ra[0..], &na, rb[0..], &nb));
+    try std.testing.expectEqual(@as(usize, 1), na);
+    try std.testing.expectEqual(@as(usize, 1), nb);
+    const oa = a[@intCast(ra[0].start)..][0..@intCast(ra[0].length)];
+    const ob = b[@intCast(rb[0].start)..][0..@intCast(rb[0].length)];
+    try std.testing.expectEqualStrings("quick", oa);
+    try std.testing.expectEqualStrings("slow", ob);
+}
+
+test "diff: words merges adjacent marks and rejects unrelated lines" {
+    var ra: [diff.MAX_WORD_MARKS]diff.WordRange = undefined;
+    var rb: [diff.MAX_WORD_MARKS]diff.WordRange = undefined;
+    var na: usize = 0;
+    var nb: usize = 0;
+    const a = "alpha beta";
+    const b = "alpha gamma delta";
+    try std.testing.expect(diff.words(a, b, ra[0..], &na, rb[0..], &nb));
+    try std.testing.expectEqual(@as(usize, 1), na);
+    try std.testing.expectEqual(@as(usize, 1), nb);
+    try std.testing.expectEqualStrings("beta", a[@intCast(ra[0].start)..][0..@intCast(ra[0].length)]);
+    try std.testing.expectEqualStrings("gamma delta", b[@intCast(rb[0].start)..][0..@intCast(rb[0].length)]);
+
+    var c: [4096]u8 = undefined;
+    var d: [4096]u8 = undefined;
+    @memset(c[0..], 'a');
+    @memset(d[0..], 'b');
+    try std.testing.expect(!diff.words("abc", "xyz", ra[0..], &na, rb[0..], &nb));
+    try std.testing.expect(!diff.words(c[0..], d[0..], ra[0..], &na, rb[0..], &nb));
+}
+
+test "diff: viewRows exposes folded rows and split pairs" {
+    const a = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n";
+    const b = "l1\nl2\nl3\nl4\nl5\nCHANGED\nl7\nl8\nl9\nl10\n";
+    var out: [32]diff.ViewRow = undefined;
+    const n = diff.viewRows(a, b, .{ .context = 1, .mode = .split }, out[0..], 0);
+    try std.testing.expect(n > 4);
+    try std.testing.expectEqual(diff.RowKind.fold, out[0].kind);
+    try std.testing.expectEqual(@as(usize, 4), out[0].hidden);
+    var saw_changed = false;
+    var saw_fold2 = false;
+    var k: usize = 0;
+    while (k < @min(n, out.len)) : (k += 1) {
+        if (out[k].kind == .changed) {
+            saw_changed = true;
+            try std.testing.expectEqual(@as(i32, 5), out[k].old_line);
+            try std.testing.expectEqual(@as(i32, 5), out[k].new_line);
+            try std.testing.expectEqual(@as(i32, 0), out[k].change);
+        }
+        if (k > 0 and out[k].kind == .fold) saw_fold2 = true;
+    }
+    try std.testing.expect(saw_changed);
+    try std.testing.expect(saw_fold2);
+
+    // first/cap 游标：只拷贝请求的一段
+    var one: [1]diff.ViewRow = undefined;
+    _ = diff.viewRows(a, b, .{ .context = 1, .mode = .split }, one[0..], 1);
+    try std.testing.expectEqual(diff.RowKind.same, one[0].kind);
+}
+
+test "diff: unified rows keep the added line beside the removed one" {
+    var out: [8]diff.ViewRow = undefined;
+    const n = diff.viewRows("a\nb\nc\n", "a\nX\nc\n", .{ .no_fold = true, .mode = .unified }, out[0..], 0);
+    try std.testing.expectEqual(@as(usize, 4), n);
+    try std.testing.expectEqual(diff.RowKind.same, out[0].kind);
+    try std.testing.expectEqual(diff.RowKind.removed, out[1].kind);
+    try std.testing.expectEqual(diff.RowKind.added, out[2].kind);
+    try std.testing.expectEqual(diff.RowKind.same, out[3].kind);
+}
+
+test "diff: unified mode draws both sides of a replaced line" {
+    var ui = core.Context{};
+    ui.begin(320, 400);
+    const res = view(&ui, "a\nb\nc\n", "a\nX\nc\n", null, .{
+        .width = 300,
+        .split_min_width = 560,
+        .no_fold = true,
+    });
+    try std.testing.expectEqual(diff.DiffMode.unified, res.mode);
+    try std.testing.expectEqual(@as(usize, 4), res.rows);
+    try std.testing.expectEqual(@as(usize, 1), res.added);
+    try std.testing.expectEqual(@as(usize, 1), res.removed);
+}
+
+test "diff: word marks draw inside the changed line budget" {
+    var ui = core.Context{};
+    ui.begin(800, 400);
+    const a = "fn main() void {\n    const value = compute(alpha);\n}\n";
+    const b = "fn main() void {\n    const value = compute(beta, gamma);\n}\n";
+    const res = view(&ui, a, b, null, .{ .width = 780, .no_fold = true });
+    try std.testing.expectEqual(@as(usize, 1), res.changes);
+    try std.testing.expect(!ui.overflowed);
+}

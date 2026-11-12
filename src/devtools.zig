@@ -1539,7 +1539,8 @@ fn cronParse(s: []const u8) ?Cron {
     c.dom_any = any;
     if (!cronField(toks[3], 1, 12, cron_mons[0..], 1, &m, &any)) return null;
     c.mon = @intCast(m);
-    if (!cronField(toks[4], 0, 6, cron_days[0..], 0, &m, &any)) return null;    c.dow = @intCast(m);
+    if (!cronField(toks[4], 0, 6, cron_days[0..], 0, &m, &any)) return null;
+    c.dow = @intCast(m);
     c.dow_any = any;
     return c;
 }
@@ -2504,41 +2505,43 @@ const KmDef = struct {
 
 const km_r0 = [_]KmDef{
     .{ .l = "Esc", .k = .escape }, .{ .w = 0.5 },
-    .{ .l = "F1", .k = .f1 },    .{ .l = "F2", .k = .f2 }, .{ .l = "F3", .k = .f3 }, .{ .l = "F4", .k = .f4 },
-    .{ .w = 0.5 },
-    .{ .l = "F5", .k = .f5 },    .{ .l = "F6", .k = .f6 }, .{ .l = "F7", .k = .f7 }, .{ .l = "F8", .k = .f8 },
-    .{ .w = 0.5 },
-    .{ .l = "F9", .k = .f9 },    .{ .l = "F10", .k = .f10 }, .{ .l = "F11", .k = .f11 }, .{ .l = "F12", .k = .f12 },
+    .{ .l = "F1", .k = .f1 },      .{ .l = "F2", .k = .f2 },
+    .{ .l = "F3", .k = .f3 },      .{ .l = "F4", .k = .f4 },
+    .{ .w = 0.5 },                 .{ .l = "F5", .k = .f5 },
+    .{ .l = "F6", .k = .f6 },      .{ .l = "F7", .k = .f7 },
+    .{ .l = "F8", .k = .f8 },      .{ .w = 0.5 },
+    .{ .l = "F9", .k = .f9 },      .{ .l = "F10", .k = .f10 },
+    .{ .l = "F11", .k = .f11 },    .{ .l = "F12", .k = .f12 },
 };
 
 const km_r1 = [_]KmDef{
-    .{ .l = "`", .k = .tilde },  .{ .l = "1", .k = .digit1 }, .{ .l = "2", .k = .digit2 }, .{ .l = "3", .k = .digit3 }, .{ .l = "4", .k = .digit4 },
-    .{ .l = "5", .k = .digit5 }, .{ .l = "6", .k = .digit6 }, .{ .l = "7", .k = .digit7 }, .{ .l = "8", .k = .digit8 }, .{ .l = "9", .k = .digit9 },
+    .{ .l = "`", .k = .tilde },  .{ .l = "1", .k = .digit1 }, .{ .l = "2", .k = .digit2 }, .{ .l = "3", .k = .digit3 },               .{ .l = "4", .k = .digit4 },
+    .{ .l = "5", .k = .digit5 }, .{ .l = "6", .k = .digit6 }, .{ .l = "7", .k = .digit7 }, .{ .l = "8", .k = .digit8 },               .{ .l = "9", .k = .digit9 },
     .{ .l = "0", .k = .digit0 }, .{ .l = "-", .k = .minus },  .{ .l = "=", .k = .equal },  .{ .l = "Bksp", .k = .backspace, .w = 2 },
 };
 
 const km_r2 = [_]KmDef{
-    .{ .l = "Tab", .k = .tab, .w = 1.5 }, .{ .l = "Q", .k = .Q }, .{ .l = "W", .k = .W }, .{ .l = "E", .k = .E }, .{ .l = "R", .k = .R },
-    .{ .l = "T", .k = .T },               .{ .l = "Y", .k = .Y }, .{ .l = "U", .k = .U }, .{ .l = "I", .k = .I }, .{ .l = "O", .k = .O },
+    .{ .l = "Tab", .k = .tab, .w = 1.5 }, .{ .l = "Q", .k = .Q },            .{ .l = "W", .k = .W },             .{ .l = "E", .k = .E },                    .{ .l = "R", .k = .R },
+    .{ .l = "T", .k = .T },               .{ .l = "Y", .k = .Y },            .{ .l = "U", .k = .U },             .{ .l = "I", .k = .I },                    .{ .l = "O", .k = .O },
     .{ .l = "P", .k = .P },               .{ .l = "[", .k = .bracket_left }, .{ .l = "]", .k = .bracket_right }, .{ .l = "\\", .k = .backslash, .w = 1.5 },
 };
 
 const km_r3 = [_]KmDef{
-    .{ .l = "Caps", .w = 1.75 }, .{ .l = "A", .k = .A }, .{ .l = "S", .k = .S }, .{ .l = "D", .k = .D }, .{ .l = "F", .k = .F },
-    .{ .l = "G", .k = .G },      .{ .l = "H", .k = .H }, .{ .l = "J", .k = .J }, .{ .l = "K", .k = .K }, .{ .l = "L", .k = .L },
+    .{ .l = "Caps", .w = 1.75 },    .{ .l = "A", .k = .A },     .{ .l = "S", .k = .S },                    .{ .l = "D", .k = .D }, .{ .l = "F", .k = .F },
+    .{ .l = "G", .k = .G },         .{ .l = "H", .k = .H },     .{ .l = "J", .k = .J },                    .{ .l = "K", .k = .K }, .{ .l = "L", .k = .L },
     .{ .l = ";", .k = .semicolon }, .{ .l = "'", .k = .quote }, .{ .l = "Enter", .k = .enter, .w = 2.25 },
 };
 
 const km_r4 = [_]KmDef{
-    .{ .l = "Shift", .m = M_SHIFT, .w = 2.25 }, .{ .l = "Z", .k = .Z }, .{ .l = "X", .k = .X }, .{ .l = "C", .k = .C }, .{ .l = "V", .k = .V },
-    .{ .l = "B", .k = .B },                     .{ .l = "N", .k = .N }, .{ .l = "M", .k = .M }, .{ .l = ",", .k = .comma }, .{ .l = ".", .k = .period },
+    .{ .l = "Shift", .m = M_SHIFT, .w = 2.25 }, .{ .l = "Z", .k = .Z },                     .{ .l = "X", .k = .X }, .{ .l = "C", .k = .C },     .{ .l = "V", .k = .V },
+    .{ .l = "B", .k = .B },                     .{ .l = "N", .k = .N },                     .{ .l = "M", .k = .M }, .{ .l = ",", .k = .comma }, .{ .l = ".", .k = .period },
     .{ .l = "/", .k = .slash },                 .{ .l = "Shift", .m = M_SHIFT, .w = 2.75 },
 };
 
 const km_r5 = [_]KmDef{
-    .{ .l = "Ctrl", .m = M_CTRL, .w = 1.25 }, .{ .l = "Win", .m = M_WIN, .w = 1.25 }, .{ .l = "Alt", .m = M_ALT, .w = 1.25 },
-    .{ .l = "Space", .k = .space, .w = 6.25 },
-    .{ .l = "Alt", .m = M_ALT, .w = 1.25 },   .{ .l = "Win", .m = M_WIN, .w = 1.25 }, .{ .l = "Menu", .w = 1.25 }, .{ .l = "Ctrl", .m = M_CTRL, .w = 1.25 },
+    .{ .l = "Ctrl", .m = M_CTRL, .w = 1.25 },  .{ .l = "Win", .m = M_WIN, .w = 1.25 },   .{ .l = "Alt", .m = M_ALT, .w = 1.25 },
+    .{ .l = "Space", .k = .space, .w = 6.25 }, .{ .l = "Alt", .m = M_ALT, .w = 1.25 },   .{ .l = "Win", .m = M_WIN, .w = 1.25 },
+    .{ .l = "Menu", .w = 1.25 },               .{ .l = "Ctrl", .m = M_CTRL, .w = 1.25 },
 };
 
 const KmKey = struct {
