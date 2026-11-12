@@ -5,15 +5,17 @@
 //! 持有的 `EditorState` 里 —— 与 `curves` / `trace` / `files` 同一口径，不在 `Context` 上加字段。
 //!
 //! 已实现：行号槽 + 等宽网格、长行横向滚动（行号槽固定）、只画视口内的行、光标与选区、
-//! 点击定位、拖选、双击选词、点行号选整行、方向键 / Home / End / PageUp / PageDown /
-//! Ctrl+Home / Ctrl+End、Shift 扩展选区、Ctrl+A、输入 / 退格 / Delete（有选区先替换）、
+//! 点击定位、拖选、双击选词、**三击选整行**、点行号选整行、方向键 / Home / End / PageUp / PageDown /
+//! Ctrl+Home / Ctrl+End、**Ctrl+左右按词移动**、Shift 扩展选区、Ctrl+A、输入 / 退格 / Delete（有选区先替换）、
 //! Enter 保持缩进（行尾是开括号或冒号再加一级）、Tab / Shift+Tab 缩进整行、括号配对、
-//! 行内语法着色、`marks` 高亮区间（供正则测试器用）、查找栏（Ctrl+F；Enter / Shift+Enter 前后跳、Esc 关闭）。
+//! 行内语法着色、`marks` 高亮区间（供正则测试器用）、查找栏（Ctrl+F；Enter / Shift+Enter 前后跳、Esc 关闭）、
+//! **Ctrl+Z / Ctrl+Y（Ctrl+Shift+Z）撤销重做**、**Ctrl+C / X / V 剪贴板（回调）**。
 //!
 //! 与 CUI 的差异（有意为之，写在这里免得下次当成 bug）：
-//! - **不做撤销/重做**（CUI 有快照栈）：要撤销请调用方自己留副本；
-//! - **不接系统剪贴板**（Ctrl+C/X/V 未做）：剪贴板属平台能力，等 X11/Cocoa 一起补；
-//! - **Ctrl+左右按词移动**、三击选段未做；
+//! - 撤销日志是**固定容量的增量记录**（32 步 × 单笔 ≤ 64 B）：单笔超过 64 B 或栈满时清空历史；
+//!   优点是不堆分配、不存全量快照；代价是大段粘贴不可分步撤销；
+//! - 剪贴板通过 `Opts.clipboard` 回调（`core.Clipboard`）交给应用/平台；未接时 Ctrl+C/X/V 无动作；
+//! - **三击选整行**（CUI 是选整段）；
 //! - 语法着色是**逐行**的（块注释不跨行跟踪）；每行最多 `MAX_RUNS` 个色块，超出并进最后一块
 //!   —— 一屏几十行 × 10 个文本节点，再多彩块就会打爆 `MAX_NODES`(256)；
 //! - 网格按**字节**对齐（制表符展开成空格；CJK 等宽字符会略微错位，与 CUI 的等宽网格同口径）；
@@ -31,6 +33,19 @@ const MAX_RUNS = 10;
 pub const MAX_QUERY = 48;
 /// 一行展开制表符后的缓冲上限（超出的部分不显示，不影响编辑）。
 const MAX_DISP = 512;
+/// 撤销日志：步数与单笔最大字节（超过就清空历史）。
+/// 体积口径：每条记录 = 8 B 头 + 两个 `EDIT_DELTA` 数组，整个栈会跟在 `EditorState` 里（示例程序里是静态数据），
+/// 所以容量是「够用就好」——20 步能盖住常规输入，长粘贴本来也不做分步撤销。
+const UNDO_MAX = 16;
+const EDIT_DELTA = 32;
+
+const EditRec = struct {
+    pos: u32 = 0,
+    removed_len: u16 = 0,
+    inserted_len: u16 = 0,
+    removed: [EDIT_DELTA]u8 = @splat(0),
+    inserted: [EDIT_DELTA]u8 = @splat(0),
+};
 
 pub const TextMark = struct {
     start: i32 = 0,
@@ -54,6 +69,8 @@ pub const Opts = struct {
     placeholder: []const u8 = "",
     /// 要加深底色的区间（搜索命中、正则匹配），按 start 升序。
     marks: []const TextMark = &.{},
+    /// Ctrl+C/X/V 的剪贴板；null = 不接系统剪贴板。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 pub const Result = struct {
@@ -91,6 +108,11 @@ pub const EditorState = struct {
     goto_col: u32 = 1,
     sel_anchor: i64 = -1,
     sel_cursor: i64 = 0,
+    // ---- 撤销/重做（固定容量增量日志；只用 [0, n) 区间，初始值不必清零）
+    undo: [UNDO_MAX]EditRec = undefined,
+    undo_n: u8 = 0,
+    redo: [UNDO_MAX]EditRec = undefined,
+    redo_n: u8 = 0,
 };
 
 /// 下一次 `codeEditor` 把光标放到第 `line` 行第 `column` 列（1 起）并滚动过去。
@@ -154,6 +176,89 @@ fn removeRange(buf: []u8, len: *usize, from: usize, to: usize) void {
     var k = from;
     while (k + n < len.*) : (k += 1) buf[k] = buf[k + n];
     len.* -= n;
+}
+
+// ------------------------------------------------------------------ 撤销/重做
+
+fn pushUndo(st: *EditorState, rec: EditRec) void {
+    if (st.undo_n >= UNDO_MAX) {
+        var i: usize = 1;
+        while (i < UNDO_MAX) : (i += 1) st.undo[i - 1] = st.undo[i];
+        st.undo_n = UNDO_MAX - 1;
+    }
+    st.undo[st.undo_n] = rec;
+    st.undo_n += 1;
+    st.redo_n = 0;
+}
+
+/// 把一次文本变更记进撤销日志；单笔太大就把历史清空（不支持分步撤销）。
+fn recordReplace(st: *EditorState, s: []const u8, from: usize, to: usize, text: []const u8) void {
+    if (to > s.len or from > to) return;
+    const rem = to - from;
+    if (rem > EDIT_DELTA or text.len > EDIT_DELTA) {
+        st.undo_n = 0;
+        st.redo_n = 0;
+        return;
+    }
+    var rec = EditRec{
+        .pos = @intCast(from),
+        .removed_len = @intCast(rem),
+        .inserted_len = @intCast(text.len),
+    };
+    if (rem > 0) @memcpy(rec.removed[0..rem], s[from..to]);
+    if (text.len > 0) @memcpy(rec.inserted[0..text.len], text);
+    pushUndo(st, rec);
+}
+
+fn insertAt(st: *EditorState, buf: []u8, len: *usize, at: usize, bytes: []const u8) bool {
+    if (bytes.len == 0) return false;
+    recordReplace(st, buf[0..len.*], at, at, bytes);
+    return insertBytes(buf, len, at, bytes);
+}
+
+fn removeAt(st: *EditorState, buf: []u8, len: *usize, from: usize, to: usize) bool {
+    if (from >= to or to > len.*) return false;
+    recordReplace(st, buf[0..len.*], from, to, "");
+    removeRange(buf, len, from, to);
+    return true;
+}
+
+/// 撤销最近一次文本变更（需要调用方提供同一份 `buf` / `len`）。返回是否真的改了。
+pub fn undo(st: *EditorState, buf: []u8, len: *usize) bool {
+    if (st.undo_n == 0) return false;
+    const rec = st.undo[st.undo_n - 1];
+    st.undo_n -= 1;
+    removeRange(buf, len, rec.pos, rec.pos + rec.inserted_len);
+    _ = insertBytes(buf, len, rec.pos, rec.removed[0..rec.removed_len]);
+    st.cursor = rec.pos;
+    st.anchor = rec.pos;
+    if (st.redo_n >= UNDO_MAX) {
+        var i: usize = 1;
+        while (i < UNDO_MAX) : (i += 1) st.redo[i - 1] = st.redo[i];
+        st.redo_n = UNDO_MAX - 1;
+    }
+    st.redo[st.redo_n] = rec;
+    st.redo_n += 1;
+    return true;
+}
+
+/// 重做最近一次撤销。
+pub fn redo(st: *EditorState, buf: []u8, len: *usize) bool {
+    if (st.redo_n == 0) return false;
+    const rec = st.redo[st.redo_n - 1];
+    st.redo_n -= 1;
+    removeRange(buf, len, rec.pos, rec.pos + rec.removed_len);
+    _ = insertBytes(buf, len, rec.pos, rec.inserted[0..rec.inserted_len]);
+    st.cursor = rec.pos + rec.inserted_len;
+    st.anchor = st.cursor;
+    if (st.undo_n >= UNDO_MAX) {
+        var i: usize = 1;
+        while (i < UNDO_MAX) : (i += 1) st.undo[i - 1] = st.undo[i];
+        st.undo_n = UNDO_MAX - 1;
+    }
+    st.undo[st.undo_n] = rec;
+    st.undo_n += 1;
+    return true;
 }
 
 fn lineEndAt(s: []const u8, start: usize) usize {
@@ -259,10 +364,25 @@ fn wordBounds(s: []const u8, at: usize) struct { start: usize, end: usize } {
     return .{ .start = a, .end = b };
 }
 
+/// Ctrl+←：跳过左侧空白，再跳到单词头（不跨行）。
+fn prevWordStart(s: []const u8, at: usize) usize {
+    var k = @min(at, s.len);
+    while (k > 0 and s[k - 1] != '\n' and !isWordByte(s[k - 1])) k -= 1;
+    while (k > 0 and isWordByte(s[k - 1])) k -= 1;
+    return k;
+}
+
+/// Ctrl+→：跳过右侧空白，再跳到单词尾（不跨行）。
+fn nextWordEnd(s: []const u8, at: usize) usize {
+    var k = @min(at, s.len);
+    while (k < s.len and s[k] != '\n' and !isWordByte(s[k])) k += 1;
+    while (k < s.len and isWordByte(s[k])) k += 1;
+    return k;
+}
+
 fn toLower(c: u8) u8 {
     return if (c >= 'A' and c <= 'Z') c + 32 else c;
 }
-
 fn matchesAt(hay: []const u8, at: usize, needle: []const u8) bool {
     if (at + needle.len > hay.len) return false;
     var i: usize = 0;
@@ -608,6 +728,8 @@ fn navKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, sc: Scan
     if (ui.input.keyPressed(.left)) {
         if (has_sel and !shift) {
             moveCaret(s, st, @min(st.anchor, cur), false);
+        } else if (ctrl) {
+            moveCaret(s, st, prevWordStart(s, cur), shift);
         } else if (cur > 0) {
             moveCaret(s, st, prevCharStart(s, cur), shift);
         }
@@ -615,6 +737,8 @@ fn navKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, sc: Scan
     if (ui.input.keyPressed(.right)) {
         if (has_sel and !shift) {
             moveCaret(s, st, @max(st.anchor, cur), false);
+        } else if (ctrl) {
+            moveCaret(s, st, nextWordEnd(s, cur), shift);
         } else if (cur < len.*) {
             moveCaret(s, st, utf8Step(s, cur), shift);
         }
@@ -670,7 +794,7 @@ fn navKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, sc: Scan
                     const ls = lineStartAt(s, ln);
                     const w = indentWidth(s, ls, opts.tab_size);
                     if (w > 0) {
-                        removeRange(buf, len, ls, ls + w);
+                        _ = removeAt(st, buf, len, ls, ls + w);
                         changed = true;
                     }
                 }
@@ -679,7 +803,7 @@ fn navKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, sc: Scan
                 while (ln <= last_line) : (ln += 1) {
                     s = buf[0..len.*];
                     const ls = lineStartAt(s, ln);
-                    if (insertBytes(buf, len, ls, unit[0..n_spaces])) changed = true;
+                    if (insertAt(st, buf, len, ls, unit[0..n_spaces])) changed = true;
                 }
             }
             if (changed) {
@@ -690,7 +814,7 @@ fn navKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, sc: Scan
             }
             return changed;
         }
-        if (insertBytes(buf, len, st.cursor, unit[0..n_spaces])) {
+        if (insertAt(st, buf, len, st.cursor, unit[0..n_spaces])) {
             st.cursor += n_spaces;
             st.anchor = st.cursor;
             return true;
@@ -710,7 +834,7 @@ fn editKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, opts: O
         const b = @max(st.anchor, st.cursor);
         const typing = ui.input.charsSlice().len > 0;
         if (typing or ui.input.keyPressed(.backspace) or ui.input.keyPressed(.delete) or ui.input.keyPressed(.enter)) {
-            removeRange(buf, len, a, b);
+            _ = removeAt(st, buf, len, a, b);
             st.cursor = a;
             st.anchor = a;
             s = buf[0..len.*];
@@ -720,13 +844,13 @@ fn editKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, opts: O
 
     if (ui.input.keyPressed(.backspace) and st.cursor > 0) {
         const prev = prevCharStart(s, st.cursor);
-        removeRange(buf, len, prev, st.cursor);
+        _ = removeAt(st, buf, len, prev, st.cursor);
         st.cursor = prev;
         st.anchor = prev;
         changed = true;
     }
     if (ui.input.keyPressed(.delete) and st.cursor < len.*) {
-        removeRange(buf, len, st.cursor, utf8Step(s, st.cursor));
+        _ = removeAt(st, buf, len, st.cursor, utf8Step(s, st.cursor));
         changed = true;
     }
     if (ui.input.keyPressed(.enter)) {
@@ -759,7 +883,7 @@ fn editKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, opts: O
                 }
             }
         }
-        if (insertBytes(buf, len, st.cursor, tmp[0..n])) {
+        if (insertAt(st, buf, len, st.cursor, tmp[0..n])) {
             st.cursor += n;
             st.anchor = st.cursor;
             changed = true;
@@ -767,13 +891,51 @@ fn editKeys(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, opts: O
     }
     const chars = ui.input.charsSlice();
     if (chars.len > 0) {
-        if (insertBytes(buf, len, st.cursor, chars)) {
+        if (insertAt(st, buf, len, st.cursor, chars)) {
             st.cursor += chars.len;
             st.anchor = st.cursor;
             changed = true;
         }
     }
     return changed;
+}
+
+/// 这一帧是不是按了剪贴板相关的键（Ctrl+C / X / V）。
+fn clipboardHotkey(ui: *core.Context) bool {
+    return ui.input.keyPressed(.C) or ui.input.keyPressed(.X) or ui.input.keyPressed(.V);
+}
+
+/// 剪贴板读写（对位 `cui_editor` 的 copy / cut / paste）。返回是否改了文本。
+fn clipboardEdit(ui: *core.Context, buf: []u8, len: *usize, st: *EditorState, opts: Opts) bool {
+    const cb = opts.clipboard orelse return false;
+    const a = @min(st.anchor, st.cursor);
+    const b = @max(st.anchor, st.cursor);
+    if (ui.input.keyPressed(.C)) {
+        if (b > a) {
+            if (cb.set) |set| set(cb.ctx, buf[a..b]);
+        }
+        return false;
+    }
+    if (ui.input.keyPressed(.X)) {
+        if (opts.read_only or b <= a) return false;
+        if (cb.set) |set| set(cb.ctx, buf[a..b]);
+        if (!removeAt(st, buf, len, a, b)) return false;
+        st.cursor = a;
+        st.anchor = a;
+        return true;
+    }
+    // Ctrl+V：整段替换选区，记成一次撤销
+    if (opts.read_only) return false;
+    const get = cb.get orelse return false;
+    var tmp: [1024]u8 = undefined;
+    const n = get(cb.ctx, tmp[0..]);
+    if (n == 0 or n > tmp.len) return false;
+    recordReplace(st, buf[0..len.*], a, b, tmp[0..n]);
+    removeRange(buf, len, a, b);
+    _ = insertBytes(buf, len, a, tmp[0..n]);
+    st.cursor = a + n;
+    st.anchor = st.cursor;
+    return true;
 }
 
 // ------------------------------------------------------------------ 主组件
@@ -874,6 +1036,18 @@ pub fn codeEditor(
                 st.find_open = true;
                 st.find_len = 0;
                 st.find_caret = 0;
+            } else if (ui.input.mods.ctrl and !opts.read_only and
+                (ui.input.keyPressed(.Z) or ui.input.keyPressed(.Y)))
+            {
+                // Ctrl+Z 撤销 / Ctrl+Y（或 Ctrl+Shift+Z）重做
+                const do_redo = ui.input.keyPressed(.Y) or ui.input.mods.shift;
+                const ok = if (do_redo) redo(st, buf, len) else undo(st, buf, len);
+                if (ok) changed = true;
+                s = buf[0..len.*];
+            } else if (ui.input.mods.ctrl and clipboardHotkey(ui)) {
+                // Ctrl+C / X / V：需要应用提供剪贴板回调
+                if (clipboardEdit(ui, buf, len, st, opts)) changed = true;
+                s = buf[0..len.*];
             } else {
                 changed = navKeys(ui, buf, len, st, sc, rows, opts);
                 if (editKeys(ui, buf, len, st, opts)) changed = true;
@@ -903,9 +1077,21 @@ pub fn codeEditor(
         if (it.clicked and ui.input.mouse.x >= body.x) {
             const key = pid ^ 0x5E1D;
             const prev = ui.knownSize(key);
-            const dbl = if (prev) |p| ui.time * 1000.0 - @as(f64, p.w) < 420.0 else false;
-            ui.rememberSize(key, @as(f32, @floatCast(ui.time * 1000.0)), 0);
-            if (dbl) {
+            const now = @as(f32, @floatCast(ui.time * 1000.0));
+            var count: u8 = 1;
+            if (prev) |p| {
+                if (ui.time * 1000.0 - @as(f64, p.w) < 420.0) {
+                    count = @intFromFloat(@min(p.h + 1, 3));
+                }
+            }
+            ui.rememberSize(key, now, @floatFromInt(count));
+            if (count >= 3) {
+                // 三击：选整行（含行尾换行）
+                const ls = lineStartAt(s, countLines(s, st.cursor));
+                const le = lineEndAt(s, ls);
+                st.anchor = ls;
+                st.cursor = if (le < len.*) le + 1 else le;
+            } else if (count == 2) {
                 const wb = wordBounds(s, st.cursor);
                 st.anchor = wb.start;
                 st.cursor = wb.end;

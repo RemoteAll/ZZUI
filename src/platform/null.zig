@@ -82,6 +82,13 @@ pub const Backend = struct {
         return -1;
     }
 
+    /// 无窗口后端没有系统剪贴板（`--once` 出图与回归用不到）。
+    pub fn getClipboard(_: *Backend, _: []u8) usize {
+        return 0;
+    }
+
+    pub fn setClipboard(_: *Backend, _: []const u8) void {}
+
     /// 无系统字体可用：按 0.55 em 估宽（粗体 0.58）、1.35 em 估高（与 core 的默认测量一致）。
     pub fn measure(_: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         const n: f32 = @floatFromInt(s.len);

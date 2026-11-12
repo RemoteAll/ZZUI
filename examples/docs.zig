@@ -327,7 +327,7 @@ const dp_endpoints = [_]zzui.devpanels.ApiEndpoint{
     .{ .method = "GET", .path = "/orders/{id}/items", .summary = "List order items", .tag = "Orders" },
 };
 
-fn build(ui: *zzui.core.Context, st: *State) void {
+fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) void {
     var col = ui.column(.{ .pad = 24, .gap = 14 });
     defer col.end();
 
@@ -423,6 +423,7 @@ fn build(ui: *zzui.core.Context, st: *State) void {
             .height = 300,
             .marks = marks[0..],
             .placeholder = "Type code here",
+            .clipboard = cb,
         });
         var sb: [96]u8 = undefined;
         const status = std.fmt.bufPrint(sb[0..], "Ln {d}, Col {d}  -  {d} lines, {d} bytes  -  {d} matches", .{
@@ -898,7 +899,10 @@ fn build(ui: *zzui.core.Context, st: *State) void {
     } else {
         zzui.extras.muted(ui, "File browser: double-click a folder to enter it, ^ goes up, R reloads");
         if (st.fb_path.isEmpty()) st.fb_path.set(if (@import("builtin").os.tag == .windows) "C:/Windows" else "/");
-        const r = zzui.files.fileBrowser(ui, "docs-fb", &st.fb_path, &st.fb, .{ .height = 320 });
+        const r = zzui.files.fileBrowser(ui, "docs-fb", &st.fb_path, &st.fb, .{
+            .height = 320,
+            .places = &.{ "C:/Windows", "C:/Users", "C:/Program Files" },
+        });
         if (r.picked) |name| {
             const n = @min(name.len, st.picked.len);
             @memcpy(st.picked[0..n], name[0..n]);
@@ -1114,8 +1118,9 @@ pub fn wWinMain(hinstance: zzui.win32.HINSTANCE, _: ?zzui.win32.HINSTANCE, cmdli
     var st = State{};
     var app = zzui.App.init(.{ .title = "ZZUI docs", .width = 760, .height = 1000 }) catch return 1;
     defer app.deinit();
+    const cb = app.clipboard();
     while (app.next()) {
-        build(&app.ui, &st);
+        build(&app.ui, &st, &cb);
         buildOverlays(&app.ui, &st);
         app.end();
     }
@@ -1127,7 +1132,8 @@ fn runOnce() i32 {
     defer app.deinit();
     if (!app.next()) return 3;
     var st = State{};
-    build(&app.ui, &st);
+    const cb = app.clipboard();
+    build(&app.ui, &st, &cb);
     buildOverlays(&app.ui, &st);
     app.end();
     if (app.ui.overflowed) return 8;
@@ -1143,9 +1149,10 @@ fn runShot(page: usize) i32 {
     // 截图时把引导直接打开，否则只能拍到未启动的样子
     if (page == 3) st.tour_step = 0;
     var n: usize = 0;
+    const cb = app.clipboard();
     while (n < 3) : (n += 1) {
         if (!app.next()) return 6;
-        build(&app.ui, &st);
+        build(&app.ui, &st, &cb);
         buildOverlays(&app.ui, &st);
         app.end();
     }

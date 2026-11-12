@@ -589,10 +589,16 @@ pub fn getWindowLongPtr(hwnd: HWND, index: i32) isize {
 
 // ---------------------------------------------------------------- 剪贴板
 pub const CF_UNICODETEXT: u32 = 13;
+/// GlobalAlloc 的「可移动」标志（写剪贴板必须用可移动块）。
+pub const GMEM_MOVEABLE: u32 = 0x0002;
 
 pub extern "user32" fn OpenClipboard(hWndNewOwner: ?HWND) callconv(.winapi) BOOL;
 pub extern "user32" fn CloseClipboard() callconv(.winapi) BOOL;
+pub extern "user32" fn EmptyClipboard() callconv(.winapi) BOOL;
 pub extern "user32" fn GetClipboardData(uFormat: u32) callconv(.winapi) ?HANDLE;
+pub extern "user32" fn SetClipboardData(uFormat: u32, hMem: HANDLE) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn GlobalAlloc(uFlags: u32, dwBytes: usize) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn GlobalFree(hMem: HANDLE) callconv(.winapi) ?HANDLE;
 pub extern "kernel32" fn GlobalLock(hMem: HANDLE) callconv(.winapi) ?*anyopaque;
 pub extern "kernel32" fn GlobalUnlock(hMem: HANDLE) callconv(.winapi) BOOL;
 

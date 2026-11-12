@@ -5,6 +5,7 @@
 //! - `focus_curr` 满了原来静默丢弃 -> Tab 顺序悄悄少控件（现在会被 markOverflow 抓到）。
 const std = @import("std");
 const core = @import("core.zig");
+const types = @import("types.zig");
 
 test "state: hover pool evicts the least recently used instead of dropping" {
     var ui = core.Context{};
@@ -93,7 +94,6 @@ test "state: panel auto height is measured at frame end and reused next frame" {
 
 test "state: popover places itself with last frame's real height" {
     const overlay = @import("overlay.zig");
-    const types = @import("types.zig");
     var ui = core.Context{};
     var open = true;
     const anchor = types.Rect{ .x = 20, .y = 230, .w = 60, .h = 20 }; // 靠近窗口底边，必须翻转上去
@@ -117,4 +117,42 @@ test "state: popover places itself with last frame's real height" {
     }
     try std.testing.expectApproxEqAbs(@as(f32, 230 - 52 - 6), ui.nodes[0].rect.y, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 52), ui.nodes[0].rect.h, 0.01);
+}
+
+test "core: gap leaves a hole between siblings" {
+    var ui = core.Context{};
+    ui.begin(300, 300);
+    var col = ui.column(.{});
+    const a = ui.reserve(0, 10, true);
+    ui.gap(8);
+    const b = ui.reserve(0, 10, true);
+    col.end();
+    try std.testing.expectApproxEqAbs(@as(f32, 8), b.y - (a.y + a.h), 0.01);
+
+    ui.begin(300, 300);
+    var row = ui.row(.{});
+    const c = ui.reserve(10, 0, false);
+    ui.gap(6);
+    const d = ui.reserve(10, 0, false);
+    row.end();
+    try std.testing.expectApproxEqAbs(@as(f32, 6), d.x - (c.x + c.w), 0.01);
+}
+
+test "core: arc, circle and polygon emit line commands" {
+    var ui = core.Context{};
+    ui.begin(200, 200);
+    const before = ui.overlay_count;
+    ui.addArc(.{ .x = 50, .y = 50 }, 20, 0, 3.14159, types.Color.hex(0xff0000, 255), 8);
+    try std.testing.expectEqual(before + 8, ui.overlay_count);
+    ui.addCircle(.{ .x = 50, .y = 50 }, 20, types.Color.hex(0x00ff00, 255));
+    try std.testing.expectEqual(before + 32, ui.overlay_count);
+    const pts = [_]types.Point{ .{ .x = 0, .y = 0 }, .{ .x = 10, .y = 0 }, .{ .x = 10, .y = 10 } };
+    ui.addPolygon(pts[0..], types.Color.hex(0x0000ff, 255));
+    try std.testing.expectEqual(before + 35, ui.overlay_count);
+    try std.testing.expect(!ui.overflowed);
+
+    // 退化输入不该产生命令
+    ui.addArc(.{ .x = 0, .y = 0 }, 0, 0, 1, types.Color.hex(0xffffff, 255), 4);
+    ui.addPolygon(pts[0..1], types.Color.hex(0xffffff, 255));
+    try std.testing.expectEqual(before + 35, ui.overlay_count);
 }

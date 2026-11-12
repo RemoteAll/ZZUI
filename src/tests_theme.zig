@@ -3,6 +3,7 @@ const std = @import("std");
 const theme = @import("theme.zig");
 const core = @import("core.zig");
 const render = @import("render.zig");
+const types = @import("types.zig");
 
 fn snap(p: theme.Palette) void {
     // 逐字段比对：当前令牌必须与选中的选色板完全一致
@@ -59,4 +60,37 @@ test "theme: withAlpha keeps rgb and replaces alpha" {
     try std.testing.expectEqual(theme.light.accent.g, c.g);
     try std.testing.expectEqual(theme.light.accent.b, c.b);
     try std.testing.expectEqual(@as(u8, 48), c.a);
+}
+
+test "theme: mix interpolates both ends and clamps k" {
+    const a = types.Color{ .r = 0, .g = 10, .b = 20, .a = 7 };
+    const b = types.Color{ .r = 100, .g = 110, .b = 120, .a = 9 };
+    const mid = theme.mix(a, b, 0.5);
+    try std.testing.expectEqual(@as(u8, 50), mid.r);
+    try std.testing.expectEqual(@as(u8, 60), mid.g);
+    try std.testing.expectEqual(@as(u8, 70), mid.b);
+    try std.testing.expectEqual(@as(u8, 255), mid.a);
+    // k 越界夹紧（-1 当 0、2 当 1）
+    const lo = theme.mix(a, b, -1);
+    try std.testing.expectEqual(@as(u8, 0), lo.r);
+    const hi = theme.mix(a, b, 2);
+    try std.testing.expectEqual(@as(u8, 100), hi.r);
+}
+
+test "theme: setAccent derives active/text/bg tokens" {
+    theme.setMode(.light);
+    theme.setAccent(types.Color.hex(0x2266FF, 255));
+    try std.testing.expectEqual(@as(u8, 0x22), theme.accent.r);
+    // 深色强调 → 白字
+    try std.testing.expectEqual(@as(u8, 0xff), theme.accent_text.r);
+    // active 比 accent 更暗，bg 带透明度
+    try std.testing.expect(theme.accent_active.r < theme.accent.r);
+    try std.testing.expectEqual(@as(u8, 32), theme.accent_bg.a);
+
+    // 浅黄强调 → 深字（对比度）
+    theme.setAccent(types.Color.hex(0xFFE066, 255));
+    try std.testing.expectEqual(@as(u8, 0x11), theme.accent_text.r);
+    try std.testing.expectEqual(@as(u8, 0x11), theme.accent_text.g);
+    theme.setMode(.light);
+    snap(theme.light);
 }

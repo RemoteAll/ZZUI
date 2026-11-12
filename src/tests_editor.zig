@@ -281,3 +281,162 @@ test "editor: read only refuses edits but still moves the caret" {
     try std.testing.expect(!r.changed);
     try std.testing.expectEqualStrings("abc", buf[0..len]);
 }
+
+/// 假剪贴板（把应用侧的实现最小化，验证编辑器真的经由回调读写）。
+const ClipBox = struct {
+    buf: [256]u8 = @splat(0),
+    len: usize = 0,
+
+    fn getCb(ctx: ?*anyopaque, out: []u8) usize {
+        const self: *ClipBox = @ptrCast(@alignCast(ctx.?));
+        const n = @min(self.len, out.len);
+        @memcpy(out[0..n], self.buf[0..n]);
+        return n;
+    }
+
+    fn setCb(ctx: ?*anyopaque, text: []const u8) void {
+        const self: *ClipBox = @ptrCast(@alignCast(ctx.?));
+        const n = @min(text.len, self.buf.len);
+        @memcpy(self.buf[0..n], text[0..n]);
+        self.len = n;
+    }
+
+    fn clipboard(self: *ClipBox) core.Clipboard {
+        return .{ .ctx = self, .get = getCb, .set = setCb };
+    }
+};
+
+fn keyMods(k: types.Key, mods: types.Mods) types.Input {
+    return .{ .keys = keyOnly(k), .key_count = 1, .mods = mods };
+}
+
+test "editor: undo and redo walk the edit log" {
+    var buf: [256]u8 = undefined;
+    var len: usize = 0;
+    setup(buf[0..], "ab", &len);
+    var st = editor.EditorState{ .cursor = 2, .anchor = 2 };
+    var ui = core.Context{};
+    focusEditor(&ui);
+    _ = frame(&ui, buf[0..], &len, &st, .{});
+
+    ui.input = .{ .chars = blk: {
+        var c: [64]u8 = @splat(0);
+        c[0] = 'c';
+        break :blk c;
+    }, .chars_len = 1 };
+    focusEditor(&ui);
+    _ = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expectEqualStrings("abc", buf[0..len]);
+
+    ui.input = keyMods(.Z, .{ .ctrl = true });
+    focusEditor(&ui);
+    var r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expect(r.changed);
+    try std.testing.expectEqualStrings("ab", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 2), st.cursor);
+
+    ui.input = keyMods(.Y, .{ .ctrl = true });
+    focusEditor(&ui);
+    r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expect(r.changed);
+    try std.testing.expectEqualStrings("abc", buf[0..len]);
+
+    // 栈空后再撤销不该崩、也不改内容
+    ui.input = keyMods(.Z, .{ .ctrl = true });
+    focusEditor(&ui);
+    _ = frame(&ui, buf[0..], &len, &st, .{});
+    ui.input = keyMods(.Z, .{ .ctrl = true });
+    focusEditor(&ui);
+    _ = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expectEqualStrings("ab", buf[0..len]);
+}
+
+test "editor: cut and paste go through the clipboard callback" {
+    var buf: [256]u8 = undefined;
+    var len: usize = 0;
+    setup(buf[0..], "hello world", &len);
+    var st = editor.EditorState{ .cursor = 5, .anchor = 0 };
+    var ui = core.Context{};
+    var clip = ClipBox{};
+    const cb = clip.clipboard();
+    const opts = editor.Opts{ .clipboard = &cb };
+    focusEditor(&ui);
+    _ = frame(&ui, buf[0..], &len, &st, opts);
+
+    ui.input = keyMods(.X, .{ .ctrl = true });
+    focusEditor(&ui);
+    var r = frame(&ui, buf[0..], &len, &st, opts);
+    try std.testing.expect(r.changed);
+    try std.testing.expectEqualStrings(" world", buf[0..len]);
+    try std.testing.expectEqualStrings("hello", clip.buf[0..clip.len]);
+
+    ui.input = keyMods(.V, .{ .ctrl = true });
+    focusEditor(&ui);
+    r = frame(&ui, buf[0..], &len, &st, opts);
+    try std.testing.expect(r.changed);
+    try std.testing.expectEqualStrings("hello world", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 5), st.cursor);
+
+    // 没有回调时 Ctrl+C/X/V 什么都不做
+    ui.input = keyMods(.X, .{ .ctrl = true });
+    focusEditor(&ui);
+    r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expect(!r.changed);
+    try std.testing.expectEqualStrings("hello world", buf[0..len]);
+}
+
+test "editor: ctrl+left and ctrl+right jump by word" {
+    var buf: [256]u8 = undefined;
+    var len: usize = 0;
+    setup(buf[0..], "foo bar baz", &len);
+    var st = editor.EditorState{ .cursor = 0, .anchor = 0 };
+    var ui = core.Context{};
+    focusEditor(&ui);
+    _ = frame(&ui, buf[0..], &len, &st, .{});
+
+    ui.input = keyMods(.right, .{ .ctrl = true });
+    focusEditor(&ui);
+    var r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expectEqual(@as(u32, 3), r.cursor);
+
+    ui.input = keyMods(.right, .{ .ctrl = true });
+    focusEditor(&ui);
+    r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expectEqual(@as(u32, 7), r.cursor);
+
+    ui.input = keyMods(.left, .{ .ctrl = true });
+    focusEditor(&ui);
+    r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expectEqual(@as(u32, 4), r.cursor);
+
+    // Shift 保持选区（anchor 不动）
+    ui.input = keyMods(.right, .{ .ctrl = true, .shift = true });
+    focusEditor(&ui);
+    r = frame(&ui, buf[0..], &len, &st, .{});
+    try std.testing.expectEqual(@as(u32, 7), r.cursor);
+    try std.testing.expectEqual(@as(u32, 4), r.anchor);
+}
+
+test "editor: third click selects the whole line" {
+    var buf: [1024]u8 = undefined;
+    var len: usize = 0;
+    setup(buf[0..], SAMPLE, &len);
+    var st = editor.EditorState{};
+    var ui = core.Context{};
+    _ = frame(&ui, buf[0..], &len, &st, .{});
+    const rc = ui.lastRect(core.Context.idOf("ed")).?;
+    const x = rc.x + 60;
+    const y = rc.y + 3; // 第一行内（行内任一点都行）
+
+    ui.time = 1.0;
+    _ = clickAt(&ui, buf[0..], &len, &st, .{}, x, y); // 第 1 击
+    ui.time = 1.1;
+    var r = clickAt(&ui, buf[0..], &len, &st, .{}, x, y); // 第 2 击 = 选词
+    try std.testing.expect(r.cursor > r.anchor);
+
+    ui.time = 1.2;
+    r = clickAt(&ui, buf[0..], &len, &st, .{}, x, y); // 第 3 击 = 选整行
+    try std.testing.expectEqual(@as(u32, 0), r.anchor);
+    const line1_end = std.mem.indexOfScalar(u8, SAMPLE, '\n').?;
+    try std.testing.expectEqual(@as(u32, @intCast(line1_end + 1)), r.cursor);
+}

@@ -279,3 +279,76 @@ test "terminal: many colored lines still fit the node budget" {
     _ = f.frame(.{ .height = 200 });
     try std.testing.expect(!f.ui.overflowed);
 }
+
+const ClipBox = struct {
+    buf: [256]u8 = @splat(0),
+    len: usize = 0,
+
+    fn getCb(ctx: ?*anyopaque, out: []u8) usize {
+        const self: *ClipBox = @ptrCast(@alignCast(ctx.?));
+        const n = @min(self.len, out.len);
+        @memcpy(out[0..n], self.buf[0..n]);
+        return n;
+    }
+
+    fn setCb(ctx: ?*anyopaque, text: []const u8) void {
+        const self: *ClipBox = @ptrCast(@alignCast(ctx.?));
+        const n = @min(text.len, self.buf.len);
+        @memcpy(self.buf[0..n], text[0..n]);
+        self.len = n;
+    }
+
+    fn clipboard(self: *ClipBox) core.Clipboard {
+        return .{ .ctx = self, .get = getCb, .set = setCb };
+    }
+};
+
+test "terminal: ctrl+c writes the selection to the clipboard" {
+    var f = Fixture{};
+    f.initTerm();
+    terminal.write(&f.buf, "alpha\nbeta");
+    _ = f.frame(.{});
+    var clip = ClipBox{};
+    const cb = clip.clipboard();
+
+    const first = f.buf.total - f.buf.count;
+    f.st.a = .{ .line = first, .col = 0 };
+    f.st.b = .{ .line = first, .col = 5 };
+    f.st.has_sel = true;
+    var keys: [8]types.Key = @splat(.unknown);
+    keys[0] = .C;
+    f.ui.input = .{ .keys = keys, .key_count = 1, .mods = .{ .ctrl = true } };
+    const r = f.frame(.{ .clipboard = &cb });
+    try std.testing.expect(r.copy != null);
+    try std.testing.expectEqualStrings("alpha", clip.buf[0..clip.len]);
+}
+
+test "terminal: ctrl+v pastes the clipboard into the input line" {
+    var f = Fixture{};
+    f.initTerm();
+    terminal.write(&f.buf, "$ ");
+    _ = f.frame(.{});
+    var clip = ClipBox{};
+    @memcpy(clip.buf[0..8], "zig test");
+    clip.len = 8;
+    const cb = clip.clipboard();
+
+    // 光标在输入行中间：粘进去要插在光标处
+    @memcpy(f.st.input[0..2], "ab");
+    f.st.input_len = 2;
+    f.st.input[2] = 0;
+    f.st.caret = 1;
+    var keys: [8]types.Key = @splat(.unknown);
+    keys[0] = .V;
+    f.ui.input = .{ .keys = keys, .key_count = 1, .mods = .{ .ctrl = true } };
+    _ = f.frame(.{ .clipboard = &cb });
+    try std.testing.expectEqualStrings("azig testb", f.st.input[0..f.st.input_len]);
+    try std.testing.expectEqual(@as(usize, 9), f.st.caret);
+
+    // 自带缓冲区满时不写越界（cap - 1 之后丢弃）
+    f.st.input_len = f.st.input.len - 2;
+    f.st.caret = f.st.input_len;
+    f.ui.input = .{ .keys = keys, .key_count = 1, .mods = .{ .ctrl = true } };
+    _ = f.frame(.{ .clipboard = &cb });
+    try std.testing.expectEqual(f.st.input.len - 1, f.st.input_len);
+}

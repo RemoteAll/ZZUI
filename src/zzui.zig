@@ -123,6 +123,12 @@ pub const App = struct {
         return self.backend.droppedFile(i);
     }
 
+    /// 系统剪贴板（编辑器/终端的 Ctrl+C/X/V 接它；null 后端下是空实现）。
+    /// 用法：`const cb = app.clipboard();` 然后传 `.clipboard = &cb`（回调持有的是 `&app.backend`，`App` 不能挪动）。
+    pub fn clipboard(self: *App) core.Clipboard {
+        return .{ .ctx = @ptrCast(&self.backend), .get = getClipboardThunk, .set = setClipboardThunk };
+    }
+
     /// 本帧拖入的文件数（等价于 `ui.input.dropped`）。
     pub fn droppedCount(self: *App) u8 {
         return self.ui.input.dropped;
@@ -155,4 +161,14 @@ fn measureThunk(ctx: ?*anyopaque, s: []const u8, size: f32, bold: bool) types.Si
 fn listThunk(ctx: ?*anyopaque, path: []const u8, out: []types.FileEntry, names: []u8, hidden: bool) i32 {
     const b: *platform.Backend = @ptrCast(@alignCast(ctx.?));
     return b.listDir(path, out, names, hidden);
+}
+
+fn getClipboardThunk(ctx: ?*anyopaque, out: []u8) usize {
+    const b: *platform.Backend = @ptrCast(@alignCast(ctx.?));
+    return b.getClipboard(out);
+}
+
+fn setClipboardThunk(ctx: ?*anyopaque, text: []const u8) void {
+    const b: *platform.Backend = @ptrCast(@alignCast(ctx.?));
+    b.setClipboard(text);
 }

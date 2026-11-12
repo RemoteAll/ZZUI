@@ -5,9 +5,9 @@
 //! 浏览器**只在进入目录/改过滤/按刷新时读盘**，不是每帧。
 //!
 //! 与 CUI 的差异（有意为之，写在这里免得下次当成 bug）：
-//! - **没有侧边栏「places」**（CUI 有 6 个默认位置）：那需要取用户目录/桌面/文档的路径，
-//!   属平台层能力，等 X11/Cocoa 后端一起补；`Opts` 里也没留这个口子；
-//! - 路径栏**不可输入**（CUI 可以点进去改路径）：改成「上级」按钮 + 只读路径；
+//! - **位置侧边栏需要调用方给 `Opts.places`**（空 = 不画）：CUI 会自己取家目录/桌面/文档，
+//!   那是平台层能力（ZZUI 目前没有 home 查询），所以不自作主张；
+//! - 路径栏**可输入**（回车跳转，`editable_path = false` 则退回只读文本）；
 //! - 列宽固定比例，不做 CUI 的「按内容自适应 + 可拖」；
 //! - 只画视口内的行（长目录不把节点预算打爆），**双击**用尺寸池记状态而不是加 `Input` 字段。
 const std = @import("std");
@@ -94,6 +94,14 @@ pub const BrowserOpts = struct {
     filter: []const u8 = "",
     folders_only: bool = false,
     hidden: bool = false,
+    /// 侧边栏位置（路径字符串）。**默认空 = 不画侧边栏**：
+    /// CUI 会自己取家目录/桌面/文档，那是平台层能力（ZZUI 目前没有 home 查询），
+    /// 所以由调用方给；给了就画，空就不画。
+    places: []const []const u8 = &.{},
+    /// 强制不画侧边栏（即使给了 `places`）。
+    no_places: bool = false,
+    /// 路径栏可直接输入（回车跳转）；false = 只读文本。
+    editable_path: bool = true,
 };
 
 pub const BrowserResult = struct {
@@ -124,6 +132,10 @@ pub const State = struct {
     sort_desc: bool = false,
     sel: i32 = -1,
     err: bool = false,
+    /// 路径栏的编辑缓冲（未聚焦时每帧从 `path` 同步）。
+    path_edit: [PATH_CAP]u8 = @splat(0),
+    path_edit_len: usize = 0,
+    path_edit_caret: usize = 0,
 };
 
 fn filterMatches(filter: []const u8, name: []const u8) bool {
@@ -336,34 +348,84 @@ pub fn fileBrowser(
     const frame = &ui.stack[ui.depth - 1];
     const w = if (opts.width > 0) opts.width else if (frame.width > 0) frame.width else 480;
     const total_h = opts.height;
+    const show_places = !opts.no_places and opts.places.len > 0 and w >= 420;
+    const place_w: f32 = if (show_places) 148 else 0;
 
-    var card = ui.column(.{ .fill = theme.surface, .radius = 10, .border = theme.border, .pad = 0, .gap = 0 });
+    // 整个浏览器占一个块；左侧位置栏 / 右侧主区各一个绝对面板。
+    const body = ui.reserve(0, total_h, true);
+    if (show_places) {
+        var side = ui.panel(.{ .x = body.x, .y = body.y, .w = place_w, .h = total_h }, .{
+            .fill = theme.row_alt,
+            .radius = 10,
+            .border = theme.border,
+            .pad = 8,
+            .gap = 2,
+        });
+        defer side.end();
+        drawPlaces(ui, id, path, st, opts, &res);
+    }
+
+    const main_x = body.x + place_w;
+    const main_w = if (body.w - place_w > 0) body.w - place_w else body.w;
+    var card = ui.panel(.{ .x = main_x, .y = body.y, .w = main_w, .h = total_h }, .{
+        .fill = theme.surface,
+        .radius = 10,
+        .border = theme.border,
+    });
     defer card.end();
 
-    // ---- 工具栏：上级 / 刷新 / 路径
+    // 路径输入框的 id 一帧内稳定（toolbar 与末尾的按键判定都要用）
+    var eb: [48]u8 = undefined;
+    const edit_id = ui.frameStr(std.fmt.bufPrint(eb[0..], "{s}#path", .{id}) catch "fb#path");
+    const edit_key = core.Context.idOf(edit_id) ^ 0x7FEB352D;
+
+    // ---- 工具栏：上级 / 刷新 / 路径（可输入，回车跳转）
+    const bar_h: f32 = 36;
     {
-        const bar = ui.reserve(0, 32, true);
-        const bid = core.Context.idOf(id) ^ 0x51D0;
-        if (widgets.buttonRect(ui, .{ .x = bar.x + 6, .y = bar.y + 4, .w = 26, .h = 24 }, "^", .{})) {
+        const bar = ui.reserve(0, bar_h, true);
+        if (widgets.buttonRect(ui, .{ .x = bar.x + 6, .y = bar.y + 5, .w = 26, .h = 26 }, "^", .{})) {
             if (path.up()) {
                 st.sel = -1;
                 res.navigated = true;
                 _ = reload(ui, path, st, opts);
             }
         }
-        if (widgets.buttonRect(ui, .{ .x = bar.x + 36, .y = bar.y + 4, .w = 26, .h = 24 }, "R", .{})) {
+        if (widgets.buttonRect(ui, .{ .x = bar.x + 36, .y = bar.y + 5, .w = 26, .h = 26 }, "R", .{})) {
             st.loaded_once = false;
             _ = reload(ui, path, st, opts);
         }
-        const pm = ui.measureText(path.slice(), theme.font_small);
-        ui.addText(
-            .{ .x = bar.x + 70, .y = bar.y + (32 - pm.h) / 2, .w = @max(0, w - 76), .h = pm.h },
-            path.slice(),
-            theme.font_small,
-            theme.secondary,
-        );
-        _ = bid;
-        ui.addOverlayLine(.{ .x = bar.x, .y = bar.y + 31 }, .{ .x = bar.x + bar.w, .y = bar.y + 31 }, 1, theme.border);
+        const focused = ui.focus_id == edit_key;
+        if (!focused and (st.path_edit_len != path.len or !std.mem.eql(u8, st.path_edit[0..st.path_edit_len], path.slice()))) {
+            st.path_edit_len = @min(path.len, st.path_edit.len);
+            @memcpy(st.path_edit[0..st.path_edit_len], path.slice()[0..st.path_edit_len]);
+            st.path_edit_caret = st.path_edit_len;
+        }
+        if (opts.editable_path) {
+            const rest = @max(100, remainingWidth(ui) - 10);
+            _ = widgets.input(ui, edit_id, st.path_edit[0..], &st.path_edit_len, &st.path_edit_caret, .{
+                .placeholder = "path",
+                .width = rest,
+            });
+            if (focused and ui.input.keyPressed(.enter)) {
+                const typed = std.mem.trim(u8, st.path_edit[0..st.path_edit_len], " \t");
+                if (typed.len > 0) {
+                    path.set(typed);
+                    st.sel = -1;
+                    st.loaded_once = false;
+                    res.navigated = true;
+                    _ = reload(ui, path, st, opts);
+                }
+            }
+        } else {
+            const pm = ui.measureText(path.slice(), theme.font_small);
+            ui.addText(
+                .{ .x = bar.x + 70, .y = bar.y + (bar_h - pm.h) / 2, .w = @max(0, bar.w - 76), .h = pm.h },
+                path.slice(),
+                theme.font_small,
+                theme.secondary,
+            );
+        }
+        ui.addOverlayLine(.{ .x = bar.x, .y = bar.y + bar_h - 1 }, .{ .x = bar.x + bar.w, .y = bar.y + bar_h - 1 }, 1, theme.border);
     }
 
     // ---- 表头（点击排序）
@@ -397,7 +459,7 @@ pub fn fileBrowser(
     }
 
     // ---- 列表（只画视口内的行）
-    const list_h = @max(60, total_h - 32 - head_h - 24);
+    const list_h = @max(60, total_h - bar_h - head_h - 24);
     var sc = ui.scroll(.{ .id = id, .height = list_h, .pad = 4, .gap = 0 });
     defer sc.end();
 
@@ -465,11 +527,11 @@ pub fn fileBrowser(
     if (st.sel >= 0 and st.sel < @as(i32, @intCast(st.n))) {
         const e = st.entries[@intCast(st.sel)];
         res.selected = e.name;
-        if (!e.dir and ui.input.keyPressed(.enter)) res.picked = e.name;
+        if (!e.dir and ui.input.keyPressed(.enter) and ui.focus_id != edit_key) res.picked = e.name;
     }
 
-    // 键盘：Backspace 上跳（在浏览器有焦点时也走这条，与 CUI 同口径）
-    if (ui.input.keyPressed(.backspace)) {
+    // 键盘：Backspace 上跳（在浏览器有焦点时也走这条，与 CUI 同口径）；路径框里退格不能跳目录
+    if (ui.focus_id != edit_key and ui.input.keyPressed(.backspace)) {
         if (path.up()) {
             st.sel = -1;
             res.navigated = true;
@@ -477,6 +539,61 @@ pub fn fileBrowser(
         }
     }
     return res;
+}
+
+/// 当前容器的剩余宽度（在 row 里 `reserve(0, …)` 会得到零宽，必须显式算）。
+fn remainingWidth(ui: *core.Context) f32 {
+    const fr = ui.stack[ui.depth - 1];
+    const rem = fr.width - fr.cursor;
+    return if (rem > 0) rem else 0;
+}
+
+/// 侧边栏位置：点一下跳过去；当前目录高亮。
+fn drawPlaces(ui: *core.Context, id: []const u8, path: *Path, st: *State, opts: BrowserOpts, res: *BrowserResult) void {
+    extras.muted(ui, "Places");
+    const key = core.Context.idOf(id) ^ 0x9100;
+    const n = @min(opts.places.len, 12);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const p = opts.places[i];
+        const row = ui.reserve(0, 26, true);
+        const it = ui.interact(key ^ @as(u64, @intCast(i)), row);
+        const on = std.mem.eql(u8, path.slice(), p);
+        if (on) {
+            ui.addBox(row, .{ .fill = theme.accent_bg, .radius = 4 });
+        } else if (it.hover) {
+            ui.addBox(row, .{ .fill = theme.track, .radius = 4 });
+        }
+        const m = ui.measureText(p, theme.font_small);
+        const room = @max(10, row.w - 12);
+        ui.addText(.{ .x = row.x + 6, .y = row.y + (26 - m.h) / 2, .w = room, .h = m.h }, fitPath(ui, p, theme.font_small, room), theme.font_small, if (on) theme.text else theme.secondary);
+        if (it.clicked) {
+            path.set(p);
+            st.sel = -1;
+            st.loaded_once = false;
+            res.navigated = true;
+            _ = reload(ui, path, st, opts);
+        }
+    }
+}
+
+/// 超宽路径逐字符回退加 "..."（文本层按字符串画，不会被节点宽裁切）。
+fn fitPath(ui: *core.Context, s: []const u8, size: f32, max_w: f32) []const u8 {
+    if (s.len == 0 or max_w <= 12) return "";
+    if (ui.measureText(s, size).w <= max_w) return s;
+    var n = s.len;
+    while (n > 0) {
+        n -= 1;
+        while (n > 0 and (s[n] & 0xC0) == 0x80) n -= 1;
+        var buf: [PATH_CAP + 3]u8 = undefined;
+        if (n + 3 > buf.len) continue;
+        @memcpy(buf[0..n], s[0..n]);
+        buf[n] = '.';
+        buf[n + 1] = '.';
+        buf[n + 2] = '.';
+        if (ui.measureText(buf[0 .. n + 3], size).w <= max_w) return ui.frameStr(buf[0 .. n + 3]);
+    }
+    return "";
 }
 
 fn labelsAsc(col: u8) []const u8 {

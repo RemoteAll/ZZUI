@@ -419,6 +419,8 @@ pub const Opts = struct {
     prompt: []const u8 = "$ ",
     /// 只看输出，不要输入行。
     no_input: bool = false,
+    /// Ctrl+C 直接写剪贴板、Ctrl+V 直接从剪贴板粘贴；null = 只回 `Result.copy`。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 pub const Result = struct {
@@ -541,6 +543,9 @@ pub fn terminal(ui: *core.Context, id: []const u8, b: *Buffer, st: *State, opts:
             var buf: [2048]u8 = undefined;
             const n = copySelection(b, s0, s1, buf[0..]);
             res.copy = ui.frameStr(buf[0..n]);
+            if (opts.clipboard) |cb| {
+                if (cb.set) |set| set(cb.ctx, buf[0..n]);
+            }
             st.has_sel = false;
         } else {
             res.interrupt = true;
@@ -548,6 +553,29 @@ pub fn terminal(ui: *core.Context, id: []const u8, b: *Buffer, st: *State, opts:
             st.input_len = 0;
             st.caret = 0;
             st.input[0] = 0;
+        }
+    }
+    if (mods.ctrl and ui.input.keyPressed(.V)) {
+        if (!opts.no_input) {
+            if (opts.clipboard) |cb| {
+                if (cb.get) |get| {
+                    var tmp: [512]u8 = undefined;
+                    const n = get(cb.ctx, tmp[0..]);
+                    if (n > 0) {
+                        // 只插输入行；超过容量的部分丢掉（末字节留给 0）
+                        const take = @min(n, st.input.len - 1 - st.input_len);
+                        if (take > 0) {
+                            var k = st.input_len;
+                            while (k > st.caret) : (k -= 1) st.input[k + take - 1] = st.input[k - 1];
+                            @memcpy(st.input[st.caret..][0..take], tmp[0..take]);
+                            st.input_len += take;
+                            st.caret += take;
+                            st.input[st.input_len] = 0;
+                            st.browsing = false;
+                        }
+                    }
+                }
+            }
         }
     }
     if (mods.ctrl and ui.input.keyPressed(.L)) {

@@ -151,6 +151,33 @@ pub fn withAlpha(c: t.Color, a: u8) t.Color {
     return .{ .r = c.r, .g = c.g, .b = c.b, .a = a };
 }
 
+/// 两色按 `k`（0 = a，1 = b）混合，alpha 取 255。
+pub fn mix(a: t.Color, b: t.Color, k: f32) t.Color {
+    const q = @min(@max(k, 0), 1);
+    const ar: f32 = @floatFromInt(a.r);
+    const ag: f32 = @floatFromInt(a.g);
+    const ab: f32 = @floatFromInt(a.b);
+    const br: f32 = @floatFromInt(b.r);
+    const bgg: f32 = @floatFromInt(b.g);
+    const bb: f32 = @floatFromInt(b.b);
+    return .{
+        .r = @intFromFloat(ar * (1 - q) + br * q),
+        .g = @intFromFloat(ag * (1 - q) + bgg * q),
+        .b = @intFromFloat(ab * (1 - q) + bb * q),
+        .a = 255,
+    };
+}
+
+/// 换强调色（accent / accent_active / accent_text / accent_bg 一起算）。
+/// 注意：`setMode` 会整包重置令牌，切换主题后要重设。
+pub fn setAccent(c: t.Color) void {
+    accent = c;
+    accent_active = mix(c, t.Color.hex(0x000000, 255), 0.18);
+    const luma = (0.2126 * @as(f32, @floatFromInt(c.r)) + 0.7152 * @as(f32, @floatFromInt(c.g)) + 0.0722 * @as(f32, @floatFromInt(c.b))) / 255.0;
+    accent_text = if (luma > 0.6) t.Color.hex(0x111111, 255) else t.Color.hex(0xffffff, 255);
+    accent_bg = withAlpha(c, if (isDark()) 48 else 32);
+}
+
 // ---- 与配色无关的尺寸令牌（保持 `const`：编译期常量更省）
 pub const radius_control: f32 = 8;
 pub const radius_pill: f32 = 999;

@@ -179,6 +179,42 @@ pub const Backend = struct {
         return std.unicode.utf16LeToUtf8(dst, src) catch 0;
     }
 
+    /// 读系统剪贴板文本（UTF-8）。返回字节数；没有文本 / 被别的进程占着就是 0。
+    pub fn getClipboard(_: *Backend, out: []u8) usize {
+        if (out.len == 0) return 0;
+        if (w.OpenClipboard(null) == 0) return 0;
+        defer _ = w.CloseClipboard();
+        const h = w.GetClipboardData(w.CF_UNICODETEXT) orelse return 0;
+        const raw = w.GlobalLock(h) orelse return 0;
+        defer _ = w.GlobalUnlock(h);
+        const p: [*]const u16 = @ptrCast(@alignCast(raw));
+        // 上限 1M 单元，防止别人写进坏数据后一直扫
+        var n: usize = 0;
+        while (n < 1024 * 1024 and p[n] != 0) n += 1;
+        return utf16ToUtf8(p[0..n], out);
+    }
+
+    /// 写系统剪贴板（UTF-8 → CF_UNICODETEXT）。整块拷进可移动全局内存后交给系统。
+    pub fn setClipboard(_: *Backend, text: []const u8) void {
+        var wide: [4096]u16 = undefined;
+        const u = w.narrowToWide(&wide, text);
+        const bytes = (u.len + 1) * @sizeOf(u16);
+        const h = w.GlobalAlloc(w.GMEM_MOVEABLE, bytes) orelse return;
+        const dst = w.GlobalLock(h) orelse return;
+        const raw: [*]u8 = @ptrCast(dst);
+        @memcpy(raw[0 .. u.len * @sizeOf(u16)], std.mem.sliceAsBytes(u));
+        @as([*]u16, @ptrCast(@alignCast(dst)))[u.len] = 0;
+        _ = w.GlobalUnlock(h);
+        if (w.OpenClipboard(null) == 0) {
+            _ = w.GlobalFree(h);
+            return;
+        }
+        _ = w.EmptyClipboard();
+        // SetClipboardData 成功后所有权归系统，**不能**再 GlobalFree
+        if (w.SetClipboardData(w.CF_UNICODETEXT, h) == null) _ = w.GlobalFree(h);
+        _ = w.CloseClipboard();
+    }
+
     pub fn poll(self: *Backend) bool {
         var msg: w.MSG = undefined;
         while (w.PeekMessageW(&msg, null, 0, 0, w.PM_REMOVE) != 0) {

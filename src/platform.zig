@@ -18,9 +18,10 @@ pub const Platform = enum { win32, null_backend };
 
 /// 后端必须提供的方法（`input` 是字段，单独检查）。
 const backend_methods = [_][]const u8{
-    "deinit",      "poll",    "size",        "scale",
-    "now",         "pixels",  "present",     "drawTextLayer",
-    "saveSurface", "measure", "droppedFile", "idle",
+    "deinit",       "poll",      "size",     "scale",
+    "now",          "pixels",    "present",  "drawTextLayer",
+    "saveSurface",  "measure",   "droppedFile", "idle",
+    "getClipboard", "setClipboard",
 };
 
 fn assertBackendContract(comptime T: type) void {
@@ -152,5 +153,21 @@ pub const Backend = union(enum) {
             .win32 => |*b| b.droppedFile(i),
             .null_backend => |*b| b.droppedFile(i),
         };
+    }
+
+    /// 读系统剪贴板文本（UTF-8），返回字节数（0 = 没有文本 / 不支持）。
+    pub fn getClipboard(self: *Backend, out: []u8) usize {
+        return switch (self.*) {
+            .win32 => |*b| b.getClipboard(out),
+            .null_backend => |*b| b.getClipboard(out),
+        };
+    }
+
+    /// 写系统剪贴板文本（UTF-8）。
+    pub fn setClipboard(self: *Backend, text: []const u8) void {
+        switch (self.*) {
+            .win32 => |*b| b.setClipboard(text),
+            .null_backend => |*b| b.setClipboard(text),
+        }
     }
 };

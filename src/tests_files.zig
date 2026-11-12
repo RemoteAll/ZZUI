@@ -110,9 +110,9 @@ test "files: double click enters a folder and updates the path" {
         col.end();
     }
     ui.paint();
-    // "sub" 是第一行（目录优先）
-    const row_y: f32 = 32 + 24 + 4 + 12; // 工具栏 + 表头 + scroll pad + 半行
-    const click_at = t.Point{ .x = 60, .y = row_y };
+    // "sub" 是第一行（目录优先）：用登记的行矩形（不靠手算高度）
+    const row_rect = ui.lastRect(core.Context.idOf("fb") ^ 0x20).?;
+    const click_at = t.Point{ .x = row_rect.x + 60, .y = row_rect.y + row_rect.h / 2 };
 
     ui.input = .{ .mouse = click_at, .click = click_at };
     ui.begin(600, 500);
@@ -151,6 +151,23 @@ test "files: path up and join keep separators sane" {
     try std.testing.expectEqualStrings("/root", p.slice());
 }
 
+test "files: an unreadable folder reports an error instead of crashing" {
+    var ui = core.Context{};
+    var fake: Fake = undefined;
+    setup(&ui, &fake);
+    var path = files.Path{};
+    path.set("/nope");
+    var st = files.State{};
+
+    ui.begin(600, 400);
+    var col = ui.column(.{});
+    const r = files.fileBrowser(&ui, "fb", &path, &st, .{});
+    col.end();
+    ui.paint();
+    // Fake 对未知路径返回 0（不报错）；真实后端返回 -1。两者都不能崩。
+    try std.testing.expect(r.err or st.n == 0);
+}
+
 test "files: the picker confirms a selection and writes the full path" {
     var ui = core.Context{};
     var fake: Fake = undefined;
@@ -175,19 +192,68 @@ test "files: the picker confirms a selection and writes the full path" {
     try std.testing.expect(!ui.overflowed);
 }
 
-test "files: an unreadable folder reports an error instead of crashing" {
+test "files: place rows and the editable path bar navigate" {
     var ui = core.Context{};
     var fake: Fake = undefined;
     setup(&ui, &fake);
     var path = files.Path{};
-    path.set("/nope");
+    path.set("/root");
     var st = files.State{};
+    const places = [_][]const u8{ "/root", "/nowhere" };
+    const opts = files.BrowserOpts{ .places = places[0..] };
 
-    ui.begin(600, 400);
-    var col = ui.column(.{});
-    const r = files.fileBrowser(&ui, "fb", &path, &st, .{});
-    col.end();
+    // 第一帧：建出位置栏与路径输入框
+    ui.begin(700, 500);
+    {
+        var col = ui.column(.{});
+        _ = files.fileBrowser(&ui, "fb", &path, &st, opts);
+        col.end();
+    }
     ui.paint();
-    // Fake 对未知路径返回 0（不报错）；真实后端返回 -1。两者都不能崩。
-    try std.testing.expect(r.err or st.n == 0);
+
+    // 位置栏第二行 → 直接跳过去
+    const pkey = core.Context.idOf("fb") ^ 0x9100;
+    const row = ui.lastRect(pkey ^ 1).?;
+    const cy = row.y + row.h / 2;
+    ui.input = .{ .mouse = .{ .x = row.x + 20, .y = cy }, .click = .{ .x = row.x + 20, .y = cy } };
+    ui.begin(700, 500);
+    {
+        var col = ui.column(.{});
+        _ = files.fileBrowser(&ui, "fb", &path, &st, opts);
+        col.end();
+    }
+    ui.paint();
+    try std.testing.expectEqualStrings("/nowhere", path.slice());
+
+    // 路径栏：先点一下取得焦点，再写内容 + 回车
+    const edit_key = core.Context.idOf("fb#path") ^ 0x7FEB352D;
+    const er = ui.lastRect(edit_key).?;
+    const ex = er.x + 30;
+    const ey = er.y + er.h / 2;
+    ui.input = .{ .mouse = .{ .x = ex, .y = ey }, .click = .{ .x = ex, .y = ey } };
+    ui.begin(700, 500);
+    {
+        var col = ui.column(.{});
+        _ = files.fileBrowser(&ui, "fb", &path, &st, opts);
+        col.end();
+    }
+    ui.paint();
+    try std.testing.expectEqual(edit_key, ui.focus_id);
+
+    const typed = "/root/sub";
+    @memcpy(st.path_edit[0..typed.len], typed);
+    st.path_edit_len = typed.len;
+    st.path_edit_caret = typed.len;
+    var inp = t.Input{ .mouse = .{ .x = ex, .y = ey } };
+    inp.addKey(.enter);
+    ui.input = inp;
+    ui.begin(700, 500);
+    {
+        var col = ui.column(.{});
+        _ = files.fileBrowser(&ui, "fb", &path, &st, opts);
+        col.end();
+    }
+    ui.paint();
+    try std.testing.expectEqualStrings("/root/sub", path.slice());
+    try std.testing.expect(!ui.overflowed);
 }

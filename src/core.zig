@@ -208,6 +208,14 @@ pub const Interaction = struct {
     activated: bool = false,
 };
 
+/// 剪贴板回调（由应用/平台提供）：编辑器与终端共用。
+/// 返回的字节数 = 写进 `out` 的 UTF-8 长度（0 = 空或平台不支持）。
+pub const Clipboard = struct {
+    ctx: ?*anyopaque = null,
+    get: ?*const fn (?*anyopaque, []u8) usize = null,
+    set: ?*const fn (?*anyopaque, []const u8) void = null,
+};
+
 pub const Scope = struct {
     ui: *Context,
     ended: bool = false,
@@ -572,6 +580,47 @@ pub const Context = struct {
             .border = opts.border orelse t.Color.transparent,
             .border_width = if (opts.border != null) opts.border_width else 0,
         });
+    }
+
+    /// 段落间距（对位 `cui_gap`）：column 里占高度，row 里占宽度。
+    pub fn gap(self: *Context, size: f32) void {
+        if (size <= 0) return;
+        const f = &self.stack[self.depth - 1];
+        switch (f.dir) {
+            .column => _ = self.reserve(0, size, true),
+            .row => _ = self.reserve(size, 0, false),
+        }
+    }
+
+    /// 弧（线段近似，浮层通道）：`start` / `end` 为弧度，0 向右、顺时针增（屏幕坐标）。
+    pub fn addArc(self: *Context, center: t.Point, radius: f32, start: f32, end: f32, color: t.Color, segments: u8) void {
+        if (radius <= 0 or end <= start) return;
+        const seg: usize = @max(1, segments);
+        const span = end - start;
+        var prev = t.Point{
+            .x = center.x + @cos(start) * radius,
+            .y = center.y + @sin(start) * radius,
+        };
+        var i: usize = 1;
+        while (i <= seg) : (i += 1) {
+            const a = start + span * (@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(seg)));
+            const cur = t.Point{ .x = center.x + @cos(a) * radius, .y = center.y + @sin(a) * radius };
+            self.addOverlayLine(prev, cur, 1, color);
+            prev = cur;
+        }
+    }
+
+    /// 圆（24 段折线）。需要填充时用 `addBox` 的圆角矩形或 `viz` 的条带法。
+    pub fn addCircle(self: *Context, center: t.Point, radius: f32, color: t.Color) void {
+        self.addArc(center, radius, 0, 6.2831855, color, 24);
+    }
+
+    /// 多边形描边（对位 `cui_draw_polygon` 的描边部分；不填充）。
+    pub fn addPolygon(self: *Context, points: []const t.Point, color: t.Color) void {
+        if (points.len < 2) return;
+        var i: usize = 1;
+        while (i < points.len) : (i += 1) self.addOverlayLine(points[i - 1], points[i], 1, color);
+        self.addOverlayLine(points[points.len - 1], points[0], 1, color);
     }
 
     pub fn addText(self: *Context, rect: t.Rect, s: []const u8, size: f32, color: t.Color) void {

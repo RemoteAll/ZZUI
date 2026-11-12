@@ -347,15 +347,7 @@ pub fn toneColor(tone: Tone) t.Color {
 }
 
 pub fn mixColor(a: t.Color, b: t.Color, k: f32) t.Color {
-    const f = if (k < 0) 0 else if (k > 1) 1 else k;
-    return .{ .r = lerp8(a.r, b.r, f), .g = lerp8(a.g, b.g, f), .b = lerp8(a.b, b.b, f), .a = 255 };
-}
-
-fn lerp8(a: u8, b: u8, k: f32) u8 {
-    const af: f32 = @floatFromInt(a);
-    const bf: f32 = @floatFromInt(b);
-    const v = af + (bf - af) * k;
-    return @intFromFloat(@round(if (v < 0) 0 else if (v > 255) 255 else v));
+    return theme.mix(a, b, k);
 }
 
 fn paintChevron(ui: *core.Context, x: f32, cy: f32, folded: bool, c: t.Color) void {
