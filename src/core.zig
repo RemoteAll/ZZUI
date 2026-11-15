@@ -409,6 +409,9 @@ pub const Context = struct {
     /// 文本编辑撤销栈（**全局一条**：同一时刻只有一个控件在编辑），满了丢最旧的。
     undo: [EDIT_UNDO_DEPTH]UndoRec = @splat(.{}),
     undo_n: usize = 0,
+    /// 重做栈：撤销时把那条反过来压进来；**发生新编辑就清空**（标准编辑器语义）。
+    redo: [EDIT_UNDO_DEPTH]UndoRec = @splat(.{}),
+    redo_n: usize = 0,
     /// 动画轨道（`anim.zig`），跨帧保留、有界。
     tracks: [MAX_TRACKS]AnimTrack = @splat(.{}),
     track_n: usize = 0,
@@ -1020,9 +1023,11 @@ pub const Context = struct {
     }
 
     /// 记一条撤销记录（在**改缓冲之前**调）。超过 `EDIT_UNDO_MAX` 的编辑直接不记。
+    /// 新编辑会**清空重做栈**（标准编辑器语义）。
     /// `noinline` 是防患：调用点分散在多个控件里，万一将来被内联展开就是好几份体积
     /// （当前实测加不加体积无差异）。
     pub noinline fn pushUndo(self: *Context, id: u64, pos: usize, removed: []const u8, inserted: []const u8) void {
+        self.redo_n = 0;
         if (removed.len > EDIT_UNDO_MAX or inserted.len > EDIT_UNDO_MAX) return;
         const rec = UndoRec{
             .id = id,
@@ -1040,14 +1045,7 @@ pub const Context = struct {
                 break :blk a;
             },
         };
-        if (self.undo_n < self.undo.len) {
-            self.undo[self.undo_n] = rec;
-            self.undo_n += 1;
-            return;
-        }
-        var i: usize = 1;
-        while (i < self.undo.len) : (i += 1) self.undo[i - 1] = self.undo[i];
-        self.undo[self.undo.len - 1] = rec;
+        pushRec(&self.undo, &self.undo_n, rec);
     }
 
     /// 撤销栈顶（仅当它属于 `id`）：把 `buf` 改回去。返回是否真的撤销了。
@@ -1056,29 +1054,65 @@ pub const Context = struct {
         if (self.undo_n == 0) return false;
         const rec = self.undo[self.undo_n - 1];
         if (rec.id != id) return false;
+        self.undo_n -= 1;
+        if (!applyRec(rec, buf, len, caret)) return false; // 内容对不上：丢弃这条，不能瞎改
+        // 撤掉的那条反过来进重做栈
+        pushRec(&self.redo, &self.redo_n, flipRec(rec));
+        return true;
+    }
+
+    /// 重做（Ctrl+Y / Ctrl+Shift+Z）：把最近撤销的那条再做一遍。
+    pub noinline fn redoLast(self: *Context, id: u64, buf: []u8, len: *usize, caret: *usize) bool {
+        if (self.redo_n == 0) return false;
+        const rec = self.redo[self.redo_n - 1];
+        if (rec.id != id) return false;
+        self.redo_n -= 1;
+        if (!applyRec(rec, buf, len, caret)) return false;
+        pushRec(&self.undo, &self.undo_n, flipRec(rec));
+        return true;
+    }
+
+    /// 压栈（满则丢最旧的）。
+    fn pushRec(stack: *[EDIT_UNDO_DEPTH]UndoRec, n: *usize, rec: UndoRec) void {
+        if (n.* < stack.len) {
+            stack[n.*] = rec;
+            n.* += 1;
+            return;
+        }
+        var i: usize = 1;
+        while (i < stack.len) : (i += 1) stack[i - 1] = stack[i];
+        stack[stack.len - 1] = rec;
+    }
+
+    /// 把一条记录「反过来」：删变插、插变删（重做与回填用）。
+    fn flipRec(rec: UndoRec) UndoRec {
+        return .{
+            .id = rec.id,
+            .pos = rec.pos,
+            .rlen = rec.ilen,
+            .ilen = rec.rlen,
+            .removed = rec.inserted,
+            .inserted = rec.removed,
+        };
+    }
+
+    /// 应用一条记录：删掉 `inserted`、写回 `removed`。
+    /// **先逐字节比对**再动手：坐标过期（外部改过缓冲）就返回 false，绝不瞎改。
+    fn applyRec(rec: UndoRec, buf: []u8, len: *usize, caret: *usize) bool {
         const pos: usize = rec.pos;
         const ilen: usize = rec.ilen;
         const rlen: usize = rec.rlen;
-        // 内容对不上（外部改过缓冲）就丢弃这条，不能瞎改
-        if (pos + ilen > len.* or !std.mem.eql(u8, buf[pos .. pos + ilen], rec.inserted[0..ilen])) {
-            self.undo_n -= 1;
-            return false;
-        }
-        if (len.* + rlen > buf.len) {
-            self.undo_n -= 1;
-            return false;
-        }
-        // 先删掉当时插入的，再把当时删掉的写回去
-        var k = pos + ilen;
+        if (pos + ilen > len.*) return false;
+        if (!std.mem.eql(u8, buf[pos .. pos + ilen], rec.inserted[0..ilen])) return false;
+        if (len.* + rlen > buf.len) return false;
         const n = len.* - (pos + ilen);
         var j: usize = 0;
         while (j < n) : (j += 1) buf[pos + j] = buf[pos + ilen + j];
         len.* -= ilen;
-        k = len.*;
+        var k = len.*;
         while (k > pos) : (k -= 1) buf[k + rlen - 1] = buf[k - 1];
         @memcpy(buf[pos .. pos + rlen], rec.removed[0..rlen]);
         len.* += rlen;
-        self.undo_n -= 1;
         caret.* = pos + rlen;
         return true;
     }

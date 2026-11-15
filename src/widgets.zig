@@ -355,9 +355,15 @@ pub fn editKeysSel(
     const b0 = @max(st.anchor, caret.*);
     const has_sel = b0 > a0;
 
-    if (ctrl and ui.input.keyPressed(.Z)) {
+    if (ctrl and ui.input.keyPressed(.Z) and !shift) {
         // Ctrl+Z：撤销栈顶（属于本控件才生效）
         if (ui.undoLast(st.id, buf, len, caret)) {
+            st.anchor = caret.*;
+            changed = true;
+        }
+    } else if (ctrl and (ui.input.keyPressed(.Y) or (shift and ui.input.keyPressed(.Z)))) {
+        // Ctrl+Y / Ctrl+Shift+Z：重做
+        if (ui.redoLast(st.id, buf, len, caret)) {
             st.anchor = caret.*;
             changed = true;
         }

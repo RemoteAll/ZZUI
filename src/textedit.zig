@@ -153,8 +153,13 @@ pub fn textarea(
         const b0 = @max(st.anchor, caret.*);
         const has_sel = b0 > a0;
 
-        if (ctrl and ui.input.keyPressed(.Z)) {
+        if (ctrl and ui.input.keyPressed(.Z) and !shift) {
             if (ui.undoLast(st.id, buf, len, caret)) {
+                st.anchor = caret.*;
+                changed = true;
+            }
+        } else if (ctrl and (ui.input.keyPressed(.Y) or (shift and ui.input.keyPressed(.Z)))) {
+            if (ui.redoLast(st.id, buf, len, caret)) {
                 st.anchor = caret.*;
                 changed = true;
             }

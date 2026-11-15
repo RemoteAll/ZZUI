@@ -1747,6 +1747,32 @@ test "input undoes the last edit with ctrl+z" {
     ui.input.addKey(.Z);
     draw(&ui, &buf, &len, &caret);
     try std.testing.expectEqual(@as(usize, 0), len);
+
+    // Ctrl+Y 重做：把刚才撤掉的两个字符再做回来
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.Y);
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqualStrings("ab", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 2), caret);
+
+    // 新编辑会让重做失效：再撤销一次，然后输入 "c"，此时 Ctrl+Y 不该有动作
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.Z);
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqual(@as(usize, 0), len);
+
+    ui.input = .{};
+    ui.input.addCharBytes("c");
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqualStrings("c", buf[0..len]);
+
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.Y);
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqualStrings("c", buf[0..len]);
 }
 
 test "textarea undoes a typed character and a deletion" {
