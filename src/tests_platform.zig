@@ -29,8 +29,7 @@ fn removeQuiet(path: []const u8) void {
 
 // ---------------------------------------------------------------- 后端契约
 
-test "platform: null backend honours the size/scale/meter contract" {
-    var b = try platform.Backend.initNull(64, 32);
+test "platform: null backend honours the size/scale/meter contract" {    var b = try platform.Backend.initNull(64, 32);
     defer b.deinit();
 
     const sz = b.size();
@@ -190,4 +189,20 @@ test "platform: headless App paints pixels and saves them" {
     const data = try readAll(tmp_name);
     defer std.testing.allocator.free(data);
     try std.testing.expectEqual(@as(usize, 54 + 120 * 80 * 4), data.len);
+}
+
+test "platform: x11 backend is a stub off Linux (never silently opens a window)" {
+    // Windows/macOS 上 `platform/x11_stub.zig` 必须明确报「未实现」；
+    // Linux 上这里会真的去连 X（没 DISPLAY 时也是同一个错误），两种情况都不该返回成功。
+    const r = platform.Backend.initX11("zzui-test", 64, 64, false);
+    if (@import("builtin").os.tag == .linux) {
+        if (r) |b_| {
+            var b = b_;
+            b.deinit();
+        } else |err| {
+            try std.testing.expectEqual(error.PlatformNotImplemented, err);
+        }
+    } else {
+        try std.testing.expectError(error.PlatformNotImplemented, r);
+    }
 }

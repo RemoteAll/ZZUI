@@ -5,8 +5,8 @@
 //! `@hasField` 检查每个后端是否实现了完整方法集 —— 新增后端漏一个方法，
 //! 构建直接失败，不会拖到运行期才发现「某个平台少了 drawTextLayer」。
 //!
-//! 已实现：`win32`（实机窗口）+ `null`（无窗口，全平台可用，供 `--once` 出图与回归）。
-//! 待实现：`x11`（Linux）、`cocoa`（macOS）—— 各占一个联合成员，核心层不变。
+//! 已实现：`win32`（实机窗口）+ `x11`（Linux / WSLg 实窗口）+ `null`（无窗口，全平台可用，供 `--once` 出图与回归）。
+//! 待实现：`cocoa`（macOS）—— 占一个联合成员，核心层不变。
 const std = @import("std");
 const builtin = @import("builtin");
 const t = @import("types.zig");
@@ -18,9 +18,14 @@ const win32_backend = if (builtin.os.tag == .windows)
     @import("platform/win32.zig")
 else
     @import("platform/win32_stub.zig");
+// 同理反过来：非 Linux 目标用 x11 占位，否则 `extern "X11"` 会拉进 Windows/macOS 链接。
+const x11_backend = if (builtin.os.tag == .linux)
+    @import("platform/x11.zig")
+else
+    @import("platform/x11_stub.zig");
 const null_backend = @import("platform/null.zig");
 
-pub const Platform = enum { win32, null_backend };
+pub const Platform = enum { win32, x11, null_backend };
 
 /// 后端必须提供的方法（`input` 是字段，单独检查）。
 const backend_methods = [_][]const u8{
@@ -44,11 +49,13 @@ fn assertBackendContract(comptime T: type) void {
 
 comptime {
     assertBackendContract(win32_backend.Backend);
+    assertBackendContract(x11_backend.Backend);
     assertBackendContract(null_backend.Backend);
 }
 
 pub const Backend = union(enum) {
     win32: win32_backend.Backend,
+    x11: x11_backend.Backend,
     null_backend: null_backend.Backend,
 
     pub fn initNull(width: u32, height: u32) !Backend {
@@ -59,10 +66,15 @@ pub const Backend = union(enum) {
         return .{ .win32 = try win32_backend.Backend.init(title, width, height, show) };
     }
 
+    pub fn initX11(title: []const u8, width: u32, height: u32, show: bool) !Backend {
+        return .{ .x11 = try x11_backend.Backend.init(title, width, height, show) };
+    }
+
     /// 把当前帧的像素缓冲写成 BMP（验证字体/图形用）。
     pub fn saveSurface(self: *Backend, path: []const u8) !void {
         switch (self.*) {
             .win32 => |*b| try b.saveSurface(path),
+            .x11 => |*b| try b.saveSurface(path),
             .null_backend => |*b| try b.saveSurface(path),
         }
     }
@@ -70,6 +82,7 @@ pub const Backend = union(enum) {
     pub fn deinit(self: *Backend) void {
         switch (self.*) {
             .win32 => |*b| b.deinit(),
+            .x11 => |*b| b.deinit(),
             .null_backend => |*b| b.deinit(),
         }
     }
@@ -77,6 +90,7 @@ pub const Backend = union(enum) {
     pub fn poll(self: *Backend) bool {
         return switch (self.*) {
             .win32 => |*b| b.poll(),
+            .x11 => |*b| b.poll(),
             .null_backend => |*b| b.poll(),
         };
     }
@@ -84,6 +98,7 @@ pub const Backend = union(enum) {
     pub fn size(self: *Backend) t.Size {
         return switch (self.*) {
             .win32 => |*b| b.size(),
+            .x11 => |*b| b.size(),
             .null_backend => |*b| b.size(),
         };
     }
@@ -91,6 +106,7 @@ pub const Backend = union(enum) {
     pub fn scale(self: *Backend) f32 {
         return switch (self.*) {
             .win32 => |*b| b.scale(),
+            .x11 => |*b| b.scale(),
             .null_backend => |*b| b.scale(),
         };
     }
@@ -99,6 +115,7 @@ pub const Backend = union(enum) {
     pub fn idle(self: *Backend, ms: u32) void {
         switch (self.*) {
             .win32 => |*b| b.idle(ms),
+            .x11 => |*b| b.idle(ms),
             .null_backend => |*b| b.idle(ms),
         }
     }
@@ -106,6 +123,7 @@ pub const Backend = union(enum) {
     pub fn now(self: *Backend) f64 {
         return switch (self.*) {
             .win32 => |*b| b.now(),
+            .x11 => |*b| b.now(),
             .null_backend => |*b| b.now(),
         };
     }
@@ -113,6 +131,7 @@ pub const Backend = union(enum) {
     pub fn pixels(self: *Backend) []u8 {
         return switch (self.*) {
             .win32 => |*b| b.pixels(),
+            .x11 => |*b| b.pixels(),
             .null_backend => |*b| b.pixels(),
         };
     }
@@ -120,6 +139,7 @@ pub const Backend = union(enum) {
     pub fn drawTextLayer(self: *Backend, ui: *core.Context, layer: u8) void {
         switch (self.*) {
             .win32 => |*b| b.drawTextLayer(ui, layer),
+            .x11 => |*b| b.drawTextLayer(ui, layer),
             .null_backend => |*b| b.drawTextLayer(ui, layer),
         }
     }
@@ -127,6 +147,7 @@ pub const Backend = union(enum) {
     pub fn present(self: *Backend) void {
         switch (self.*) {
             .win32 => |*b| b.present(),
+            .x11 => |*b| b.present(),
             .null_backend => |*b| b.present(),
         }
     }
@@ -134,6 +155,7 @@ pub const Backend = union(enum) {
     pub fn measure(self: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         return switch (self.*) {
             .win32 => |*b| b.measure(s, size_px, bold),
+            .x11 => |*b| b.measure(s, size_px, bold),
             .null_backend => |*b| b.measure(s, size_px, bold),
         };
     }
@@ -142,6 +164,7 @@ pub const Backend = union(enum) {
     pub fn listDir(self: *Backend, path: []const u8, out: []t.FileEntry, names: []u8, hidden: bool) i32 {
         return switch (self.*) {
             .win32 => |*b| b.listDir(path, out, names, hidden),
+            .x11 => |*b| b.listDir(path, out, names, hidden),
             .null_backend => |*b| b.listDir(path, out, names, hidden),
         };
     }
@@ -149,6 +172,7 @@ pub const Backend = union(enum) {
     pub fn input(self: *Backend) *t.Input {
         return switch (self.*) {
             .win32 => |*b| &b.input,
+            .x11 => |*b| &b.input,
             .null_backend => |*b| &b.input,
         };
     }
@@ -157,6 +181,7 @@ pub const Backend = union(enum) {
     pub fn droppedFile(self: *Backend, i: usize) ?[]const u8 {
         return switch (self.*) {
             .win32 => |*b| b.droppedFile(i),
+            .x11 => |*b| b.droppedFile(i),
             .null_backend => |*b| b.droppedFile(i),
         };
     }
@@ -165,6 +190,7 @@ pub const Backend = union(enum) {
     pub fn getClipboard(self: *Backend, out: []u8) usize {
         return switch (self.*) {
             .win32 => |*b| b.getClipboard(out),
+            .x11 => |*b| b.getClipboard(out),
             .null_backend => |*b| b.getClipboard(out),
         };
     }
@@ -173,6 +199,7 @@ pub const Backend = union(enum) {
     pub fn setClipboard(self: *Backend, text: []const u8) void {
         switch (self.*) {
             .win32 => |*b| b.setClipboard(text),
+            .x11 => |*b| b.setClipboard(text),
             .null_backend => |*b| b.setClipboard(text),
         }
     }

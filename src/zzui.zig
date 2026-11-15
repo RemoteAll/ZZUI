@@ -77,12 +77,17 @@ pub const App = struct {
     };
 
     pub fn init(desc: Desc) !App {
-        // 按目标平台选后端：目前只有 Win32 实现了真窗口；
-        // 其他平台返回**明确的运行时错误**（而不是编译不过或静默出空窗）。
+        // 按目标平台选后端：Windows → Win32，Linux → X11（WSLg / 真机都能跑）；
+        // 其余平台返回**明确的运行时错误**（而不是编译不过或静默出空窗）。
         // 新增后端时在这里加一个分支，并在 `platform.zig` 的联合体里加成员。
         if (comptime @import("builtin").os.tag == .windows) {
             var app = App{ .backend = try platform.Backend.initWin32(desc.title, desc.width, desc.height, desc.show) };
             app.ui.need_frame = true; // 首帧不要被空闲节流挡住
+            return app;
+        }
+        if (comptime @import("builtin").os.tag == .linux) {
+            var app = App{ .backend = try platform.Backend.initX11(desc.title, desc.width, desc.height, desc.show) };
+            app.ui.need_frame = true;
             return app;
         }
         return error.PlatformNotImplemented;

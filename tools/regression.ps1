@@ -626,22 +626,20 @@ if (Test-Path 'zig-out/bin/zzui-devtools-x64.exe') {
     Skip "devtools" "zzui-devtools-x64.exe not found"
 }
 
-Write-Host "== 1.11 Linux tests under WSL (cross-compiled on Windows, run natively) =="
-# 口径：**不需要在 WSL 里装 Zig** —— 用本机 Zig 交叉编译出 linux-x64 的测试二进制，
-# 再拷进 WSL 原生跑一遍。这样能抓到「只在 Linux 链接/运行期才暴露」的问题
-# （实测样例：platform.Backend 的 win32 成员会把 `extern "user32"` 拉进 Linux 链接，
-#  早先 `zig build check` 不链接所以没发现，换成真二进制直接报 undefined symbol）。
-$linuxBin = 'zig-out/bin/zzui-tests-linux'
+Write-Host "== 1.11 Linux tests under WSL (native zig inside the distro) =="
+# 口径变更（2026-11-15）：Linux 目标现在真的链 X11（`platform/x11.zig`），
+# Windows 上的 `zig test -target x86_64-linux-gnu` 找不到 libX11，所以改成**在 WSL 里原生跑**。
+# 需要 WSL 里有 zig（`~/zig/zig`）；没有就 Skip，不把回归拖红。
 $null = wsl.exe -d Ubuntu -- true 2>$null
 $hasWsl = ($LASTEXITCODE -eq 0)
 if ($hasWsl) {
-    Remove-Item $linuxBin -ErrorAction SilentlyContinue
-    & zig test src/tests.zig -target x86_64-linux-gnu -O ReleaseSafe --test-no-exec "-femit-bin=$linuxBin" 2>&1 | Out-Null
-    Check "linux:tests-built" (Test-Path $linuxBin) "binary=$linuxBin"
-    if (Test-Path $linuxBin) {
+    $probe = wsl.exe -d Ubuntu -- bash -lc 'test -x $HOME/zig/zig && echo yes' 2>&1 | Out-String
+    if ($probe -match 'yes') {
         $wslRoot = '/mnt/' + $root.Substring(0, 1).ToLower() + $root.Substring(2).Replace('\', '/')
-        $out = wsl.exe -d Ubuntu -- bash -lc "cp '$wslRoot/$linuxBin' /tmp/zzui-tests && chmod +x /tmp/zzui-tests && /tmp/zzui-tests 2>&1 | tail -1" 2>&1 | Out-String
-        Check "linux:tests-pass" ($out -match 'All \d+ tests passed') ($out.Trim())
+        $out = wsl.exe -d Ubuntu -- bash -lc "cd '$wslRoot' && ZIG_GLOBAL_CACHE_DIR=/tmp/zgc `$HOME/zig/zig build test --cache-dir /tmp/zc 2>&1" 2>&1 | Out-String
+        Check "linux:tests-pass" ($LASTEXITCODE -eq 0) (($out.Trim() -split "`n" | Select-Object -Last 2) -join ' ') 
+    } else {
+        Skip "linux" "no zig in WSL (install to ~/zig)"
     }
 } else {
     Skip "linux" "no WSL distro (wsl -d Ubuntu)"
