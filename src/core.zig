@@ -145,6 +145,23 @@ const SizeState = struct {
     used: f64 = 0,
 };
 
+/// 单行输入框的跨帧编辑状态槽数（`widgets.input` 用；一屏十几个输入框够用）。
+pub const MAX_EDIT_STATES = 16;
+
+/// 单行输入框的跨帧状态：选区锚点 + 连击计数。
+/// 不放调用方是因为 `input()` 的签名里只有 `caret`，加 `*State` 要改掉全部调用点；
+/// 而「锚点 / 连击」本来就是控件自己的交互状态，与 `scrolls` / `tips` 同类。
+pub const EditState = struct {
+    id: u64 = 0,
+    /// 选区锚点（字节偏移）；与插入符相同 = 没有选区。
+    anchor: usize = 0,
+    /// 连击计数（2 = 双击选词，3 = 三击全选）与上一次按下的时间。
+    clicks: u8 = 0,
+    last_click: f64 = 0,
+    /// 最近一次被用到的时间（池满时按它淘汰）。
+    used: f64 = 0,
+};
+
 /// 一条动画轨道：`value` 是当前插值值（一般 0..1），`last` 用于算 dt，`used` 用于淘汰。
 pub const AnimTrack = struct {
     id: u64 = 0,
@@ -370,6 +387,9 @@ pub const Context = struct {
     /// 绝对面板的上一帧真实尺寸（`PanelOpts.size_key` 帧末回填），跨帧保留、有界、LRU。
     sizes: [MAX_SIZES]SizeState = @splat(.{}),
     size_n: usize = 0,
+    /// 单行输入框的编辑状态（选区锚点 / 连击），跨帧保留、有界、LRU。
+    edits: [MAX_EDIT_STATES]EditState = @splat(.{}),
+    edit_n: usize = 0,
     /// 动画轨道（`anim.zig`），跨帧保留、有界。
     tracks: [MAX_TRACKS]AnimTrack = @splat(.{}),
     track_n: usize = 0,
@@ -954,6 +974,30 @@ pub const Context = struct {
             if (s.used < self.sizes[oldest].used) oldest = k;
         }
         self.sizes[oldest] = .{ .id = key, .w = w, .h = h, .used = self.time };
+    }
+
+    /// 取（必要时新建）某控件 id 的编辑状态槽：选区锚点与连击计数跨帧保留。
+    /// 池满按**最久未使用**淘汰（不能落回 0 号槽，否则两个输入框会串选区）。
+    pub fn editState(self: *Context, key: u64) *EditState {
+        var i: usize = 0;
+        while (i < self.edit_n) : (i += 1) {
+            if (self.edits[i].id == key) {
+                self.edits[i].used = self.time;
+                return &self.edits[i];
+            }
+        }
+        if (self.edit_n < self.edits.len) {
+            const slot = self.edit_n;
+            self.edits[slot] = .{ .id = key, .used = self.time };
+            self.edit_n += 1;
+            return &self.edits[slot];
+        }
+        var oldest: usize = 0;
+        for (self.edits, 0..) |s, k| {
+            if (s.used < self.edits[oldest].used) oldest = k;
+        }
+        self.edits[oldest] = .{ .id = key, .used = self.time };
+        return &self.edits[oldest];
     }
 
     /// 绝对定位面板：节点矩形就是 rect，内部内容从 rect + pad 开始；不推进父容器游标。

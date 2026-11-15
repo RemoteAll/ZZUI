@@ -252,6 +252,8 @@ pub const InputOpts = struct {
     width: f32 = 0,
     /// 密码框：用圆点代替实际字符（缓冲里仍是明文）。
     password: bool = false,
+    /// 剪贴板（Ctrl+C/X/V）。null = 不碰剪贴板，其余编辑行为不变。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 fn utf8Len(b: u8) usize {
@@ -280,6 +282,58 @@ fn caretFromX(ui: *core.Context, s: []const u8, x0: f32, mx: f32) usize {
         i = e;
     }
     return s.len;
+}
+
+/// 光标所在「词」的字节区间（字母/数字/下划线/非 ASCII 算词字符）。
+/// 双击选词用；落在空白上返回空区间（光标处）。CJK 按「连续非 ASCII 字节」算一个词。
+fn wordRange(s: []const u8, at: usize) struct { start: usize, end: usize } {
+    const is_word = struct {
+        fn f(c: u8) bool {
+            return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'z') or
+                (c >= 'A' and c <= 'Z') or c == '_' or c >= 0x80;
+        }
+    }.f;
+    if (s.len == 0) return .{ .start = 0, .end = 0 };
+    var probe = @min(at, s.len);
+    if (probe >= s.len or !is_word(s[probe])) {
+        if (probe == 0) return .{ .start = 0, .end = 0 };
+        probe -= 1;
+        while (probe > 0 and (s[probe] & 0xC0) == 0x80) probe -= 1;
+        if (!is_word(s[probe])) return .{ .start = @min(at, s.len), .end = @min(at, s.len) };
+    }
+    var a = probe;
+    while (a > 0) {
+        var p = a - 1;
+        while (p > 0 and (s[p] & 0xC0) == 0x80) p -= 1;
+        if (!is_word(s[p])) break;
+        a = p;
+    }
+    var b = probe;
+    while (b < s.len and is_word(s[b])) b = nextCharEnd(s, b);
+    return .{ .start = a, .end = b };
+}
+
+/// 删掉 `buf[a..b]`（调用方保证 a <= b <= len）。
+fn removeRange(buf: []u8, len: *usize, a: usize, b: usize) void {
+    if (b <= a or b > len.*) return;
+    const n = b - a;
+    var k = b;
+    while (k < len.*) : (k += 1) buf[k - n] = buf[k];
+    len.* -= n;
+}
+
+/// 在 `at` 处插入字节；缓冲不够返回 false（内容不变）。
+fn insertBytes(buf: []u8, len: *usize, at: usize, bytes: []const u8) bool {
+    if (at > len.* or len.* + bytes.len > buf.len) return false;
+    var k = len.*;
+    while (k > at) : (k -= 1) buf[k + bytes.len - 1] = buf[k - 1];
+    @memcpy(buf[at .. at + bytes.len], bytes);
+    len.* += bytes.len;
+    return true;
+}
+
+fn clipboardHotkey(ui: *core.Context) bool {
+    return ui.input.keyPressed(.C) or ui.input.keyPressed(.X) or ui.input.keyPressed(.V);
 }
 
 /// 单行文本编辑按键（`input` / `textedit.search` 共用）：退格、Delete、左右、Home/End、字符插入。
@@ -323,7 +377,8 @@ pub fn editKeys(ui: *core.Context, buf: []u8, len: *usize, caret: *usize, change
     }
 }
 
-/// 单行文本输入：点击定位光标，方向键 / Home / End / 退格 / Delete 编辑。
+/// 单行文本输入：点击定位光标、按住拖动 / 双击选词 / 三击全选、Shift+方向键扩选、
+/// Ctrl+A 全选、Ctrl+C/X/V 走剪贴板；退格 / Delete / 输入字符都会先吃掉选区。
 /// 返回 true 表示内容发生了变化。`buf` 由调用方提供（定长），`len` / `caret` 按字节计。
 pub fn input(
     ui: *core.Context,
@@ -335,24 +390,141 @@ pub fn input(
 ) bool {
     const h: f32 = 36;
     const rect = ui.reserve(opts.width, h, opts.width <= 0);
-    const it = ui.interactEx(core.Context.idOf(id) ^ 0x7FEB352D, rect, true);
+    const pid = core.Context.idOf(id) ^ 0x7FEB352D;
+    const it = ui.interactEx(pid, rect, true);
     var changed = false;
     const pad_x: f32 = 10;
+    const tx = rect.x + pad_x;
+    const right = rect.x + rect.w - pad_x;
 
-    if (it.clicked) {
-        caret.* = caretFromX(ui, buf[0..len.*], rect.x + pad_x, ui.input.mouse.x);
+    if (len.* > buf.len) len.* = buf.len;
+    if (caret.* > len.*) caret.* = len.*;
+    const st = ui.editState(pid);
+    if (st.anchor > len.*) st.anchor = len.*;
+
+    // ---- 鼠标：按下定位 + 连击（双击选词、三击全选），按住拖动扩选
+    if (it.pressed) {
+        caret.* = caretFromX(ui, buf[0..len.*], tx, ui.input.mouse.x);
+        const now = ui.time;
+        st.clicks = if (st.clicks > 0 and now - st.last_click <= 0.42) st.clicks +| 1 else 1;
+        st.last_click = now;
+        if (st.clicks == 2) {
+            const w = wordRange(buf[0..len.*], caret.*);
+            st.anchor = w.start;
+            caret.* = w.end;
+        } else if (st.clicks >= 3) {
+            st.anchor = 0;
+            caret.* = len.*;
+            st.clicks = 0;
+        } else {
+            st.anchor = caret.*;
+        }
+    } else if (it.dragging) {
+        caret.* = caretFromX(ui, buf[0..len.*], tx, ui.input.mouse.x);
     }
 
+    // ---- 键盘（只给焦点控件）：先按选区语义处理，再算方向键
     if (it.focused) {
-        // 先处理导航/编辑键，再插入本帧字符：与真实的 KEYDOWN-先于-WM_CHAR 顺序一致。
-        editKeys(ui, buf, len, caret, &changed);
+        const shift = ui.input.mods.shift;
+        const ctrl = ui.input.mods.ctrl;
+        const a0 = @min(st.anchor, caret.*);
+        const b0 = @max(st.anchor, caret.*);
+        const has_sel = b0 > a0;
+
+        if (ctrl and ui.input.keyPressed(.A)) {
+            st.anchor = 0;
+            caret.* = len.*;
+        } else if (ctrl and opts.clipboard != null and clipboardHotkey(ui)) {
+            const cb = opts.clipboard.?;
+            if (ui.input.keyPressed(.C)) {
+                if (has_sel) {
+                    if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+                }
+            } else if (ui.input.keyPressed(.X)) {
+                if (has_sel) {
+                    if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+                    removeRange(buf, len, a0, b0);
+                    caret.* = a0;
+                    st.anchor = a0;
+                    changed = true;
+                }
+            } else if (cb.get) |get| {
+                var tmp: [1024]u8 = undefined;
+                const n = get(cb.ctx, tmp[0..]);
+                if (n > 0 and n <= tmp.len and len.* - (b0 - a0) + n <= buf.len) {
+                    removeRange(buf, len, a0, b0);
+                    if (insertBytes(buf, len, a0, tmp[0..n])) {
+                        caret.* = a0 + n;
+                        st.anchor = caret.*;
+                        changed = true;
+                    }
+                }
+            }
+        } else {
+            // 有选区时退格 / Delete 只吃选区（不额外删一个字符）
+            if (has_sel and (ui.input.keyPressed(.backspace) or ui.input.keyPressed(.delete))) {
+                removeRange(buf, len, a0, b0);
+                caret.* = a0;
+                changed = true;
+            } else if (!has_sel) {
+                if (ui.input.keyPressed(.backspace) and caret.* > 0) {
+                    const prev = prevCharStart(buf[0..len.*], caret.*);
+                    removeRange(buf, len, prev, caret.*);
+                    caret.* = prev;
+                    changed = true;
+                }
+                if (ui.input.keyPressed(.delete) and caret.* < len.*) {
+                    const end = nextCharEnd(buf[0..len.*], caret.*);
+                    removeRange(buf, len, caret.*, end);
+                    changed = true;
+                }
+            }
+            // 方向键 / Home / End：Shift = 只挪插入符（扩选），否则塌缩到选区边界
+            if (ui.input.keyPressed(.left)) {
+                caret.* = if (has_sel and !shift) a0 else prevCharStart(buf[0..len.*], caret.*);
+            } else if (ui.input.keyPressed(.right)) {
+                caret.* = if (has_sel and !shift) b0 else nextCharEnd(buf[0..len.*], caret.*);
+            } else if (ui.input.keyPressed(.home)) {
+                caret.* = 0;
+            } else if (ui.input.keyPressed(.end)) {
+                caret.* = len.*;
+            }
+            // 输入字符：有选区先替换整段
+            const chars = ui.input.charsSlice();
+            if (chars.len > 0) {
+                if (has_sel) {
+                    const s0 = @min(st.anchor, caret.*);
+                    const s1 = @max(st.anchor, caret.*);
+                    removeRange(buf, len, s0, s1);
+                    caret.* = s0;
+                    changed = true;
+                }
+                if (insertBytes(buf, len, caret.*, chars)) {
+                    caret.* += chars.len;
+                    changed = true;
+                }
+            }
+            // Shift 扩选时保留锚点；其余情况锚点跟着插入符走
+            if (!shift or changed) st.anchor = caret.*;
+        }
     }
 
     const border = if (it.focused) theme.accent else theme.border;
     ringBox(ui, rect, theme.radius_control, theme.bg, border);
 
+    // 选区底色：压在文字下面（节点顺序即绘制顺序）
+    const sa = @min(st.anchor, caret.*);
+    const sb = @max(st.anchor, caret.*);
+    if (it.focused and sb > sa) {
+        const x0 = @min(tx + ui.measureText(buf[0..sa], theme.font_body).w, right);
+        const x1 = @min(tx + ui.measureText(buf[0..sb], theme.font_body).w, right);
+        if (x1 > x0) ui.addBox(
+            .{ .x = x0, .y = rect.y + 7, .w = x1 - x0, .h = rect.h - 14 },
+            .{ .fill = theme.withAlpha(theme.accent, 64), .radius = 3 },
+        );
+    }
+
     const content = buf[0..len.*];
-    const tx = rect.x + pad_x;
     const m = ui.measureText(content, theme.font_body);
     const ty = rect.y + (rect.h - m.h) / 2;
     if (len.* == 0 and opts.placeholder.len > 0) {
@@ -389,7 +561,7 @@ pub fn input(
     if (it.focused) {
         const cm = ui.measureText(buf[0..caret.*], theme.font_body);
         var cx = tx + cm.w;
-        if (cx > rect.x + rect.w - pad_x) cx = rect.x + rect.w - pad_x;
+        if (cx > right) cx = right;
         const bar = t.Rect{ .x = cx, .y = rect.y + 8, .w = 1.5, .h = rect.h - 16 };
         ui.addOverlayLine(.{ .x = bar.x, .y = bar.y }, .{ .x = bar.x, .y = bar.y + bar.h }, 1.5, theme.text);
         // 输入法的组成窗/候选窗要跟着光标（Windows 上靠这个位置才不跑到左上角）

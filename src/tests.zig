@@ -1366,3 +1366,165 @@ test "caret rect is reset every frame and the last writer wins" {
     try std.testing.expectEqual(@as(f32, 40), ui.caret_rect.?.y);
 }
 
+const ClipStore = struct {
+    buf: [256]u8 = @splat(0),
+    len: usize = 0,
+
+    fn getFn(ctx: ?*anyopaque, out: []u8) usize {
+        const self: *ClipStore = @ptrCast(@alignCast(ctx.?));
+        const n = @min(self.len, out.len);
+        @memcpy(out[0..n], self.buf[0..n]);
+        return n;
+    }
+
+    fn setFn(ctx: ?*anyopaque, text: []const u8) void {
+        const self: *ClipStore = @ptrCast(@alignCast(ctx.?));
+        const n = @min(text.len, self.buf.len);
+        @memcpy(self.buf[0..n], text[0..n]);
+        self.len = n;
+    }
+
+    fn clip(self: *ClipStore) core.Clipboard {
+        return .{ .ctx = @ptrCast(self), .get = getFn, .set = setFn };
+    }
+};
+
+test "input double click selects a word and typing replaces it" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    const seed = "hello world";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize) void {
+            u.begin(300, 200);
+            var col = u.column(.{ .pad = 0, .gap = 0 });
+            _ = widgets.input(u, "sel", b, l, c, .{});
+            col.end();
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret);
+    // 第一次按下：光标落在词首
+    ui.time = 0;
+    ui.input = .{ .mouse = .{ .x = 2, .y = 10 }, .pressed = true, .down = true };
+    draw(&ui, &buf, &len, &caret);
+    // 420 ms 内第二次按下：选中整词（同时抬一次手让它拿到焦点）
+    ui.time = 0.1;
+    ui.input = .{ .mouse = .{ .x = 2, .y = 10 }, .pressed = true, .down = true, .click = .{ .x = 2, .y = 10 } };
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqual(@as(usize, 5), caret);
+
+    // 输入一个字符：整词被替换
+    ui.input = .{};
+    ui.input.addCharBytes("X");
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqualStrings("X world", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 1), caret);
+}
+
+test "input drag selects a range and backspace deletes it" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    const seed = "hello world";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize) void {
+            u.begin(300, 200);
+            var col = u.column(.{ .pad = 0, .gap = 0 });
+            _ = widgets.input(u, "drag", b, l, c, .{});
+            col.end();
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret);
+    // 按下在词首
+    ui.input = .{ .mouse = .{ .x = 2, .y = 10 }, .pressed = true, .down = true };
+    draw(&ui, &buf, &len, &caret);
+    // 按住拖到中间（同时抬手拿焦点）：扩展选区
+    ui.input = .{ .mouse = .{ .x = 40, .y = 10 }, .down = true, .click = .{ .x = 40, .y = 10 } };
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expect(caret > 0);
+    const dragged = caret;
+    // 退格只吃选区
+    ui.input = .{};
+    ui.input.addKey(.backspace);
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqual(@as(usize, seed.len - dragged), len);
+    try std.testing.expectEqual(@as(usize, 0), caret);
+}
+
+test "input selects all and copies it to the clipboard" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    const seed = "abc";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+    var store = ClipStore{};
+    const cb = store.clip();
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize, clip: *const core.Clipboard) void {
+            u.begin(300, 200);
+            var col = u.column(.{ .pad = 0, .gap = 0 });
+            _ = widgets.input(u, "clip", b, l, c, .{ .clipboard = clip });
+            col.end();
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret, &cb);
+    // 点一下拿焦点
+    ui.input = .{ .mouse = .{ .x = 2, .y = 10 }, .pressed = true, .down = true, .click = .{ .x = 2, .y = 10 } };
+    draw(&ui, &buf, &len, &caret, &cb);
+    // Ctrl+A 全选，再 Ctrl+C 复制
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.A);
+    draw(&ui, &buf, &len, &caret, &cb);
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.C);
+    draw(&ui, &buf, &len, &caret, &cb);
+    try std.testing.expectEqualStrings("abc", store.buf[0..store.len]);
+
+    // 全选后输入：整段被替换
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.A);
+    draw(&ui, &buf, &len, &caret, &cb);
+    ui.input = .{};
+    ui.input.addCharBytes("z");
+    draw(&ui, &buf, &len, &caret, &cb);
+    try std.testing.expectEqualStrings("z", buf[0..len]);
+}
+
+test "two inputs keep independent selection anchors" {
+    var ui = core.Context{};
+    const a = ui.editState(11);
+    a.anchor = 3;
+    const b = ui.editState(22);
+    b.anchor = 7;
+    try std.testing.expectEqual(@as(usize, 3), ui.editState(11).anchor);
+    try std.testing.expectEqual(@as(usize, 7), ui.editState(22).anchor);
+    // 池满后淘汰最久未用：新 id 拿到槽位，旧 id 的锚点不会串到别人身上
+    var i: u64 = 0;
+    while (i < core.MAX_EDIT_STATES) : (i += 1) {
+        ui.time += 1;
+        _ = ui.editState(1000 + i);
+    }
+    const fresh = ui.editState(9999);
+    try std.testing.expectEqual(@as(usize, 0), fresh.anchor);
+    try std.testing.expectEqual(@as(u64, 9999), fresh.id);
+    // 被淘汰的 id 再回来是空状态，不会串到别人的锚点
+    try std.testing.expectEqual(@as(usize, 0), ui.editState(22).anchor);
+}
+
