@@ -299,6 +299,8 @@ pub const InlineEditOpts = struct {
     /// 0 = 按内容宽（最少 80）。
     width: f32 = 0,
     size: f32 = theme.font_body,
+    /// 剪贴板（Ctrl+C/X/V）。null = 不碰剪贴板。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 pub const InlineEditResult = struct {
@@ -326,7 +328,9 @@ pub fn inlineEdit(
     const h: f32 = @max(28, m.h + 12);
     const w = if (opts.width > 0) opts.width else @max(m.w + 20, 80);
     const rect = ui.reserve(w, h, opts.width <= 0);
-    const it = ui.interactEx(core.Context.idOf(id) ^ 0x1A2B3C4D, rect, true);
+    const pid = core.Context.idOf(id) ^ 0x1A2B3C4D;
+    const it = ui.interactEx(pid, rect, true);
+    const est = ui.editState(pid);
     var res = InlineEditResult{ .editing = state.editing };
 
     if (!state.editing) {
@@ -348,6 +352,7 @@ pub fn inlineEdit(
         if (it.clicked or it.activated) {
             state.editing = true;
             state.caret = content.len;
+            est.anchor = state.caret;
             res.editing = true;
         }
         return res;
@@ -355,15 +360,32 @@ pub fn inlineEdit(
 
     // 编辑态：与 widgets.input 同款外观，但共用本控件的交互 id，
     // 这样点进来的那一帧就能直接拿焦点（不需要再点一次）。
-    if (it.clicked) state.caret = @min(len.*, buf.len);
+    if (it.clicked) {
+        state.caret = @min(len.*, buf.len);
+        est.anchor = state.caret;
+    }
     const border = if (it.focused) theme.accent else theme.border;
     widgets.ringBox(ui, rect, theme.radius_control, theme.bg, border);
 
     var changed = false;
-    if (it.focused) widgets.editKeys(ui, buf, len, &state.caret, &changed);
+    if (it.focused) {
+        if (est.anchor > len.*) est.anchor = len.*;
+        if (widgets.editKeysSel(ui, est, buf, len, &state.caret, opts.clipboard)) changed = true;
+    }
     if (changed) res.changed = true;
 
     const cur = buf[0..@min(len.*, buf.len)];
+    // 选区底色（压在文字下面）
+    const sa = @min(est.anchor, state.caret);
+    const sb = @max(est.anchor, state.caret);
+    if (it.focused and sb > sa) {
+        const x0 = rect.x + 8 + ui.measureText(cur[0..sa], opts.size).w;
+        const x1 = @min(rect.x + 8 + ui.measureText(cur[0..sb], opts.size).w, rect.x + rect.w - 6);
+        if (x1 > x0) ui.addBox(
+            .{ .x = x0, .y = rect.y + 6, .w = x1 - x0, .h = rect.h - 12 },
+            .{ .fill = theme.withAlpha(theme.accent, 64), .radius = 3 },
+        );
+    }
     if (cur.len == 0 and opts.placeholder.len > 0) {
         const pm = ui.measureText(opts.placeholder, opts.size);
         ui.addText(
@@ -522,6 +544,8 @@ pub const MoneyOpts = struct {
     decimals: u8 = 2,
     width: f32 = 0,
     hint: []const u8 = "",
+    /// 剪贴板（Ctrl+C/X/V）。null = 不碰剪贴板。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 /// 金额输入：平时显示千分位文本，点一下变纯数字编辑，Enter 提交、Esc 取消。
@@ -535,7 +559,9 @@ pub fn moneyInput(
 ) bool {
     const h: f32 = 36;
     const rect = ui.reserve(opts.width, h, opts.width <= 0);
-    const it = ui.interactEx(core.Context.idOf(id) ^ 0x30A1E5, rect, true);
+    const pid = core.Context.idOf(id) ^ 0x30A1E5;
+    const it = ui.interactEx(pid, rect, true);
+    const est = ui.editState(pid);
     var changed = false;
 
     if (!state.editing) {
@@ -590,17 +616,35 @@ pub fn moneyInput(
             state.len = @min(plain.len, state.buf.len);
             @memcpy(state.buf[0..state.len], plain[0..state.len]);
             state.caret = state.len;
+            est.anchor = state.caret;
             state.editing = true;
         }
         return false;
     }
 
     // 编辑态
-    if (it.clicked) state.caret = @min(state.len, state.buf.len);
+    if (it.clicked) {
+        state.caret = @min(state.len, state.buf.len);
+        est.anchor = state.caret;
+    }
     widgets.ringBox(ui, rect, theme.radius_control, theme.bg, if (it.focused) theme.accent else theme.border);
     var edited = false;
-    if (it.focused) widgets.editKeys(ui, &state.buf, &state.len, &state.caret, &edited);
+    if (it.focused) {
+        if (est.anchor > state.len) est.anchor = state.len;
+        if (widgets.editKeysSel(ui, est, &state.buf, &state.len, &state.caret, opts.clipboard)) edited = true;
+    }
     const cur = state.buf[0..@min(state.len, state.buf.len)];
+    // 选区底色（压在文字下面）
+    const sa = @min(est.anchor, state.caret);
+    const sb = @max(est.anchor, state.caret);
+    if (it.focused and sb > sa) {
+        const x0 = rect.x + 10 + ui.measureText(cur[0..sa], theme.font_body).w;
+        const x1 = @min(rect.x + 10 + ui.measureText(cur[0..sb], theme.font_body).w, rect.x + rect.w - 8);
+        if (x1 > x0) ui.addBox(
+            .{ .x = x0, .y = rect.y + 7, .w = x1 - x0, .h = rect.h - 14 },
+            .{ .fill = theme.withAlpha(theme.accent, 64), .radius = 3 },
+        );
+    }
     if (cur.len == 0) {
         const pm = ui.measureText("0", theme.font_body);
         ui.addText(

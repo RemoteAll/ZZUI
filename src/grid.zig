@@ -336,7 +336,9 @@ pub const GridRow = struct {
         if (idx >= MAX_COLS) return false;
         const r = self.cell(idx);
         if (r.w <= 0) return false;
-        const cell_hit = ui.interactEx(idOf(g.id, 0xE0D0 +% (self.index * MAX_COLS + idx)), r, false);
+        const cell_pid = idOf(g.id, 0xE0D0 +% (self.index * MAX_COLS + idx));
+        const cell_hit = ui.interactEx(cell_pid, r, false);
+        const est = ui.editState(cell_pid);
         const editing = st.editing_row == @as(i32, @intCast(self.index)) and st.editing_col == @as(i32, @intCast(idx));
 
         if (!editing) {
@@ -347,19 +349,32 @@ pub const GridRow = struct {
                 st.edit_len = @min(len.*, st.edit_buf.len);
                 @memcpy(st.edit_buf[0..st.edit_len], buf[0..st.edit_len]);
                 st.edit_caret = st.edit_len;
+                est.anchor = st.edit_caret;
             }
             return false;
         }
 
         // 编辑态
-        if (cell_hit.clicked) st.edit_caret = @min(st.edit_len, st.edit_buf.len);
-        widgets.ringBox(ui, r, 0, theme.bg, theme.accent);
-        if (cell_hit.hover or ui.input.down) {
-            // 同一时刻只应有一个编辑框获得按键：用 focus 判定
+        if (cell_hit.clicked) {
+            st.edit_caret = @min(st.edit_len, st.edit_buf.len);
+            est.anchor = st.edit_caret;
         }
+        widgets.ringBox(ui, r, 0, theme.bg, theme.accent);
         var changed = false;
-        widgets.editKeys(ui, &st.edit_buf, &st.edit_len, &st.edit_caret, &changed);
+        if (est.anchor > st.edit_len) est.anchor = st.edit_len;
+        if (widgets.editKeysSel(ui, est, &st.edit_buf, &st.edit_len, &st.edit_caret, null)) changed = true;
         const cur = st.edit_buf[0..@min(st.edit_len, st.edit_buf.len)];
+        // 选区底色（压在文字下面）
+        const sa = @min(est.anchor, st.edit_caret);
+        const sb = @max(est.anchor, st.edit_caret);
+        if (sb > sa) {
+            const x0 = r.x + g.opts.pad + ui.measureText(cur[0..sa], theme.font_body).w;
+            const x1 = @min(r.x + g.opts.pad + ui.measureText(cur[0..sb], theme.font_body).w, r.x + r.w - g.opts.pad);
+            if (x1 > x0) ui.addBox(
+                .{ .x = x0, .y = r.y + 4, .w = x1 - x0, .h = r.h - 8 },
+                .{ .fill = theme.withAlpha(theme.accent, 64), .radius = 2 },
+            );
+        }
         const m = ui.measureText(cur, theme.font_body);
         ui.addText(.{ .x = r.x + g.opts.pad, .y = r.y + (r.h - m.h) / 2, .w = m.w, .h = m.h }, cur, theme.font_body, theme.text);
         const careted = ui.measureText(st.edit_buf[0..@min(st.edit_caret, cur.len)], theme.font_body);

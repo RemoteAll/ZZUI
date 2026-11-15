@@ -217,6 +217,64 @@ test "data grid cell edits inline" {
     try std.testing.expectEqual(@as(i32, -1), st.editing_row);
 }
 
+// 内联编辑：Ctrl+A 全选后输入，整段替换后再提交
+test "data grid cell edit supports select all" {
+    var ui = core.Context{};
+    var st = grid.GridState{};
+    var buf: [32]u8 = @splat(0);
+    @memcpy(buf[0..3], "abc");
+    var len: usize = 3;
+
+    var frame: usize = 0;
+    while (frame < 2) : (frame += 1) {
+        ui.begin(480, 400);
+        if (grid.dataGridBegin(&ui, "g6", cols3[0..], 1, null, &st, .{})) {
+            if (grid.dataGridRow(&ui, 0)) |row| {
+                row.text(0, buf[0..len], theme.text);
+                _ = row.edit(0, &buf, &len);
+            }
+            grid.dataGridEnd(&ui);
+        }
+        ui.paint();
+        if (frame == 0) {
+            const cell_id = core.Context.idOf("g6") ^ 0xE0D0;
+            const cr = ui.lastRect(cell_id) orelse return error.NoHit;
+            ui.input = .{ .mouse = .{ .x = cr.x + 20, .y = cr.y + cr.h / 2 }, .click = .{ .x = cr.x + 20, .y = cr.y + cr.h / 2 } };
+            ui.input.mods = .{ .shift = true };
+        }
+    }
+    try std.testing.expectEqual(@as(i32, 0), st.editing_row);
+
+    // Ctrl+A 全选（内联编辑不受焦点门控，与旧行为一致）
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.A);
+    ui.begin(480, 400);
+    if (grid.dataGridBegin(&ui, "g6", cols3[0..], 1, null, &st, .{})) {
+        if (grid.dataGridRow(&ui, 0)) |row| {
+            _ = row.edit(0, &buf, &len);
+        }
+        grid.dataGridEnd(&ui);
+    }
+    ui.paint();
+
+    // 输入一个字符再回车：整段被替换
+    ui.input = .{};
+    ui.input.addCharBytes("Z");
+    ui.input.addKey(.enter);
+    ui.begin(480, 400);
+    var committed = false;
+    if (grid.dataGridBegin(&ui, "g6", cols3[0..], 1, null, &st, .{})) {
+        if (grid.dataGridRow(&ui, 0)) |row| {
+            committed = row.edit(0, &buf, &len);
+        }
+        grid.dataGridEnd(&ui);
+    }
+    ui.paint();
+    try std.testing.expect(committed);
+    try std.testing.expectEqualStrings("Z", buf[0..len]);
+}
+
 // ---------------------------------------------------------------- 树表
 
 const nodes = [_]grid.TreeNode{

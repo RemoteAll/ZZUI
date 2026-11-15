@@ -173,6 +173,43 @@ test "inline edit switches to editing and commits on enter" {
     try std.testing.expectEqualStrings("text!", buf[0..len]);
 }
 
+// 就地编辑：选区（Ctrl+A 后输入替换整段），剪贴板也走同一套
+test "inline edit supports select all and replace" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    @memcpy(buf[0..4], "text");
+    var len: usize = 4;
+    var st = actions.InlineEditState{};
+    const id = core.Context.idOf("iesel") ^ 0x1A2B3C4D;
+
+    ui.begin(300, 200);
+    _ = actions.inlineEdit(&ui, "iesel", &buf, &len, &st, .{});
+    ui.paint();
+    const r = ui.lastRect(id) orelse return error.NoHit;
+
+    // 点击进入编辑（同时拿到焦点）
+    ui.input = .{ .mouse = .{ .x = r.x + 4, .y = r.y + 4 }, .click = .{ .x = r.x + 4, .y = r.y + 4 } };
+    ui.begin(300, 200);
+    _ = actions.inlineEdit(&ui, "iesel", &buf, &len, &st, .{});
+    ui.paint();
+
+    // Ctrl+A 全选，再输入一个字符 → 整段被替换
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.A);
+    ui.begin(300, 200);
+    _ = actions.inlineEdit(&ui, "iesel", &buf, &len, &st, .{});
+    ui.paint();
+
+    ui.input = .{};
+    ui.input.addCharBytes("Z");
+    ui.begin(300, 200);
+    const res = actions.inlineEdit(&ui, "iesel", &buf, &len, &st, .{});
+    ui.paint();
+    try std.testing.expect(res.changed);
+    try std.testing.expectEqualStrings("Z", buf[0..len]);
+}
+
 // 反应条：点一下翻转并增减计数。
 test "reactions toggle and count" {
     var ui = core.Context{};

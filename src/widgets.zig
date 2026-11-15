@@ -439,47 +439,6 @@ pub fn editKeysSel(
     return changed;
 }
 
-/// 单行文本编辑按键（`input` / `textedit.search` 共用）：退格、Delete、左右、Home/End、字符插入。
-pub fn editKeys(ui: *core.Context, buf: []u8, len: *usize, caret: *usize, changed: *bool) void {
-    if (ui.input.keyPressed(.backspace) and caret.* > 0 and caret.* <= len.*) {
-        const prev = prevCharStart(buf[0..len.*], caret.*);
-        const n = caret.* - prev;
-        var k = caret.*;
-        while (k < len.*) : (k += 1) buf[k - n] = buf[k];
-        len.* -= n;
-        caret.* = prev;
-        changed.* = true;
-    }
-    if (ui.input.keyPressed(.delete) and caret.* < len.*) {
-        const end = nextCharEnd(buf[0..len.*], caret.*);
-        const n = end - caret.*;
-        var k = end;
-        while (k < len.*) : (k += 1) buf[k - n] = buf[k];
-        len.* -= n;
-        changed.* = true;
-    }
-    if (ui.input.keyPressed(.left) and caret.* > 0) caret.* = prevCharStart(buf[0..len.*], caret.*);
-    if (ui.input.keyPressed(.right) and caret.* < len.*) caret.* = nextCharEnd(buf[0..len.*], caret.*);
-    if (ui.input.keyPressed(.home)) caret.* = 0;
-    if (ui.input.keyPressed(.end)) caret.* = len.*;
-
-    const chars = ui.input.charsSlice();
-    var ci: usize = 0;
-    while (ci < chars.len) {
-        const clen = utf8Len(chars[ci]);
-        if (ci + clen > chars.len) break;
-        if (len.* + clen <= buf.len and caret.* <= len.*) {
-            var k = len.*;
-            while (k > caret.*) : (k -= 1) buf[k + clen - 1] = buf[k - 1];
-            @memcpy(buf[caret.* .. caret.* + clen], chars[ci .. ci + clen]);
-            len.* += clen;
-            caret.* += clen;
-            changed.* = true;
-        }
-        ci += clen;
-    }
-}
-
 /// 单行文本输入：点击定位光标、按住拖动 / 双击选词 / 三击全选、Shift+方向键扩选、
 /// Ctrl+A 全选、Ctrl+C/X/V 走剪贴板；退格 / Delete / 输入字符都会先吃掉选区。
 /// 返回 true 表示内容发生了变化。`buf` 由调用方提供（定长），`len` / `caret` 按字节计。
