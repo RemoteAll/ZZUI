@@ -260,3 +260,29 @@ test "platform: x11 parses text/uri-list into drop paths (Linux only)" {
     x11.parseUriList("file:///tmp/100%zz\n", &edge);
     try std.testing.expectEqualStrings("/tmp/100%zz", edge.at(0));
 }
+
+test "platform: x11 font renders ascii and measures non-ascii (Linux only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const font = @import("platform/x11_font.zig");
+    // 没装 libfreetype.so.6 / 一款字体都没有时跳过（这台机器上没有输入法/字体也能跑测试）
+    var f = font.Font.open() orelse return error.SkipZigTest;
+    defer f.close();
+
+    // ASCII 有真字形：宽度随内容增长，字形标记为可用
+    const w_hi = f.measure("Hi", 14);
+    const w_long = f.measure("Hiii", 14);
+    try std.testing.expect(w_hi > 0);
+    try std.testing.expect(w_long > w_hi);
+    try std.testing.expect(f.glyph('H').ok);
+    try std.testing.expect(f.glyph('H').w > 0);
+
+    // 基线在文本高度之内（0 < ascent < 1.35 em）
+    try std.testing.expect(f.ascent(14) > 0);
+    try std.testing.expect(f.ascent(14) < 14 * 1.35);
+
+    // 非 ASCII：字体里有没有字形都得给步进（否则中文会把整行挤在一起）
+    try std.testing.expect(f.measure("Привет", 14) > 0);
+    const cjk = f.measure("中文", 14);
+    try std.testing.expect(cjk >= 14); // 至少 1 em（两个缺字形各按 0.5 em 算）
+}
+

@@ -1,10 +1,10 @@
 //! X11 后端（Linux）。只依赖 core 的绘制指令，不含布局/控件逻辑。
 //!
 //! 与 Win32 后端的差别（都是「平台能力」范畴，核心层无感）：
-//! - **文本**：X11 核心字体（`fixed`，服务端位图字体）→ 启动时把 ASCII 32..126 画进 1-bit Pixmap，
-//!   `XGetImage` 读回成字形图集，之后按请求字号**最近邻缩放**画进 BGRA 缓冲（与 Win32 同口径：
-//!   文本落在帧缓冲里，层级顺序正确）。**非 ASCII（中文/emoji）目前不画**，只按字号推进光标 ——
-//!   要中文得接 Xft/fontconfig（`apt install libxft-dev`），文件头记着这条待办；
+//! - **文本**：优先用**运行时加载的 FreeType**（`x11_font.zig`：`dlopen("libfreetype.so.6")`，
+//!   不引入构建期依赖）—— 有真字体就能画**任意 Unicode**（西里尔/希腊/中文……取决于字体文件是否含该字形），
+//!   抗锯齿灰度按 alpha 混进 BGRA；`ZZUI_FONT=/path/to/font.ttf` 可指定（中文字体就指过去）。
+//!   拿不到库或字体时**退回**核心字体（服务端 `fixed`）的 ASCII 1-bit 图集，非 ASCII 只推进光标；
 //! - **像素格式**：X 服务端是 0x00RRGGBB，我们是 BGRA 字节序，`present` 时逐像素换 R/B；
 //! - **剪贴板**：`CLIPBOARD` selection（`setClipboard` 当 owner，别的客户端来要就回 `UTF8_STRING`；
 //!   `getClipboard` 自己持有就直接给，否则 `XConvertSelection` + 120ms 超时往返，超时返回 0）；
@@ -20,6 +20,7 @@ const std = @import("std");
 const t = @import("../types.zig");
 const core = @import("../core.zig");
 const bmpfile = @import("../bmpfile.zig");
+const ft = @import("x11_font.zig");
 
 // ------------------------------------------------------------------ Xlib ABI（手写声明）
 
@@ -330,6 +331,9 @@ pub const Backend = struct {
     xbuf: []u32 = &.{},
     input: t.Input = .{},
     glyphs: Glyphs = .{},
+    /// 运行时加载的 TrueType 字体（`libfreetype.so.6`）。null = 没拿到库/字体，走核心字体 ASCII 路径。
+    font: ?ft.Font = null,
+    /// 核心字体（服务端 `fixed`）：只在没拿到 FreeType 时提供 ASCII 字形。
     font_id: Font = 0,
     closed: bool = false,
     /// 鼠标按键状态（点击在**抬起**那帧上报，与 Win32 一致）
@@ -410,6 +414,8 @@ pub const Backend = struct {
         if (self.img == null) return error.PlatformNotImplemented;
 
         self.loadGlyphs();
+        // 有 FreeType 就优先用真字体（含中文）：失败就保持 null，行为退回核心字体
+        self.font = ft.Font.open();
         if (show) _ = XMapWindow(dpy, self.win);
         _ = XFlush(dpy);
         return self;
@@ -494,6 +500,10 @@ pub const Backend = struct {
     }
 
     pub fn deinit(self: *Backend) void {
+        if (self.font) |*f| {
+            f.close();
+            self.font = null;
+        }
         if (self.dpy) |dpy| {
             if (self.img) |img| {
                 // 置 null：XDestroyImage 只负责释放 XImage 结构，不去 free 我们的像素缓冲
@@ -714,13 +724,15 @@ pub const Backend = struct {
     }
 
     pub fn drawTextLayer(self: *Backend, ui: *core.Context, layer: u8) void {
-        if (!self.glyphs.ok or self.buf.len == 0) return;
+        if (self.buf.len == 0) return;
+        if (self.font == null and !self.glyphs.ok) return;
         var i: usize = 0;
         while (i < ui.cmd_count) : (i += 1) {
             switch (ui.cmds[i]) {
                 .text => |c| {
                     if (c.layer != layer) continue;
-                    if (c.emoji) continue; // 彩色 emoji 需要 Xft/fontconfig
+                    // 有 FreeType 时 emoji 通道也当普通字形画（单色）
+                    if (c.emoji and self.font == null) continue;
                     self.drawTextCmd(c);
                 },
                 else => {},
@@ -729,6 +741,21 @@ pub const Backend = struct {
     }
 
     fn drawTextCmd(self: *Backend, c: core.TextCmd) void {
+        if (self.font) |*f| {
+            // 真字体：基线定位 + alpha 混合（中文/日文/俄文都能画）
+            f.draw(
+                self.buf,
+                self.px_w,
+                self.px_h,
+                c.text,
+                c.rect.x,
+                c.rect.y + f.ascent(c.size),
+                c.size,
+                c.color,
+                c.clip,
+            );
+            return;
+        }
         const gl = self.glyphs;
         const gh: f32 = @floatFromInt(@as(u32, gl.ascent) + gl.descent);
         const k = if (gh > 0) @max(0.5, c.size / gh) else 1;
@@ -815,6 +842,9 @@ pub const Backend = struct {
 
     pub fn measure(self: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         _ = bold;
+        if (self.font) |*f| {
+            return .{ .w = f.measure(s, size_px), .h = size_px * 1.35 };
+        }
         const gl = self.glyphs;
         const units = if (gl.ok) @as(f32, @floatFromInt(gl.adv)) else size_px * 0.55;
         const per = if (gl.ok) size_px / @as(f32, @floatFromInt(@as(u32, gl.ascent) + gl.descent)) else 1;

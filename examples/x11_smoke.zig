@@ -13,7 +13,10 @@ pub fn main() !void {
         if (!app.next()) return;
         var col = app.ui.column(.{ .pad = 20, .gap = 10, .fill = zzui.theme.bg, .radius = 0 });
         zzui.widgets.heading(&app.ui, "ZZUI on X11", 1);
-        zzui.widgets.text(&app.ui, "Hello from WSLg / Xwayland - vector icons, rects, ASCII text.");
+        zzui.widgets.text(&app.ui, "Hello from WSLg / Xwayland - vector icons, rects, text.");
+        // 非 ASCII：字体里有的字形（如西里尔）会真画出来，没有的（中文）按半个 em 推进；
+        // 想画中文就 `ZZUI_FONT=/path/to/NotoSansCJK.ttc ./zzui-x11-smoke`。
+        zzui.widgets.text(&app.ui, "Привет · 中文需 ZZUI_FONT 指 CJK 字体");
         if (zzui.widgets.button(&app.ui, "Click me", .{})) clicks += 1;
         var row = app.ui.row(.{ .gap = 8 });
         _ = zzui.icons.iconButton(&app.ui, "smk-ok", .check, .{ .solid = true });
