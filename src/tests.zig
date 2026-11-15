@@ -765,8 +765,19 @@ test "textarea backspace removes the newline across lines" {
     ui.begin(400, 200);
     _ = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
     ui.paint();
-    // 点击会定位到第一行行首；把光标放回第二行行首（模拟用户已移到下一行）
-    caret = 3;
+    // 点击会定位到第一行行首；用键盘移到第二行行首（End 到行尾、再右移过换行）。
+    // 注意：不能直接改 `caret` —— 锚点在 Context 的编辑状态池里，外部挪光标等于扩选。
+    ui.input = .{};
+    ui.input.addKey(.end);
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
+    ui.paint();
+    ui.input = .{};
+    ui.input.addKey(.right);
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
+    ui.paint();
+    try std.testing.expectEqual(@as(usize, 3), caret);
 
     ui.input = .{};
     ui.input.addKey(.backspace);
@@ -1528,3 +1539,86 @@ test "two inputs keep independent selection anchors" {
     try std.testing.expectEqual(@as(usize, 0), ui.editState(22).anchor);
 }
 
+test "textarea shift+right extends the selection and backspace deletes it" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "hello";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+    const opts = textedit.TextareaOpts{ .rows = 2 };
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize, o: textedit.TextareaOpts) void {
+            u.begin(400, 200);
+            _ = textedit.textarea(u, "tasel", b, l, c, o);
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret, opts);
+    // 点一下拿焦点（同时也把锚点放到行首）
+    ui.input = .{ .mouse = .{ .x = 4, .y = 12 }, .click = .{ .x = 4, .y = 12 } };
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqual(@as(usize, 0), caret);
+
+    // Shift+→ ×2 → 选中 "he"
+    var k: usize = 0;
+    while (k < 2) : (k += 1) {
+        ui.input = .{};
+        ui.input.mods.shift = true;
+        ui.input.addKey(.right);
+        draw(&ui, &buf, &len, &caret, opts);
+    }
+    try std.testing.expectEqual(@as(usize, 2), caret);
+
+    // 退格只吃选区
+    ui.input = .{};
+    ui.input.addKey(.backspace);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings("llo", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 0), caret);
+}
+
+test "textarea ctrl+a selects all, copies it, and typing replaces it" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "ab\ncd";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+    var store = ClipStore{};
+    const cb = store.clip();
+    const opts = textedit.TextareaOpts{ .rows = 3, .clipboard = &cb };
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize, o: textedit.TextareaOpts) void {
+            u.begin(400, 200);
+            _ = textedit.textarea(u, "tacl", b, l, c, o);
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret, opts);
+    ui.input = .{ .mouse = .{ .x = 4, .y = 12 }, .click = .{ .x = 4, .y = 12 } };
+    draw(&ui, &buf, &len, &caret, opts);
+
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.A);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqual(@as(usize, seed.len), caret);
+
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.C);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings(seed, store.buf[0..store.len]);
+
+    // 全选后输入：整段被替换
+    ui.input = .{};
+    ui.input.addCharBytes("z");
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings("z", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 1), caret);
+}

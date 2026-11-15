@@ -285,8 +285,8 @@ fn caretFromX(ui: *core.Context, s: []const u8, x0: f32, mx: f32) usize {
 }
 
 /// 光标所在「词」的字节区间（字母/数字/下划线/非 ASCII 算词字符）。
-/// 双击选词用；落在空白上返回空区间（光标处）。CJK 按「连续非 ASCII 字节」算一个词。
-fn wordRange(s: []const u8, at: usize) struct { start: usize, end: usize } {
+/// 双击选词用；落在空白上返回空区间（光标处）。`textedit.textarea` 也调它。
+pub fn wordRange(s: []const u8, at: usize) struct { start: usize, end: usize } {
     const is_word = struct {
         fn f(c: u8) bool {
             return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'z') or

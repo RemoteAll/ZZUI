@@ -62,6 +62,8 @@ pub const TextareaOpts = struct {
     line_h: f32 = 20,
     pad: f32 = 8,
     placeholder: []const u8 = "",
+    /// 剪贴板（Ctrl+C/X/V）。null = 不碰剪贴板，其余编辑行为不变。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 /// 多行文本域：按宽换行、Enter 换行、上下左右/Home/End、点击定位、
@@ -77,12 +79,16 @@ pub fn textarea(
     const rows_f: f32 = @floatFromInt(@max(opts.rows, 1));
     const h = opts.line_h * rows_f + opts.pad * 2;
     const rect = ui.reserve(opts.width, h, opts.width <= 0);
-    const it = ui.interactEx(sliceId(id, 0x7A47E), rect, true);
+    const pid = sliceId(id, 0x7A47E);
+    const it = ui.interactEx(pid, rect, true);
     const inner_x = rect.x + opts.pad;
     const inner_w = rect.w - opts.pad * 2;
 
     var changed = false;
     if (caret.* > len.*) caret.* = len.*;
+    // 选区锚点 / 连击：与 `widgets.input` 共用同一套「按 id 的编辑状态池」
+    const st = ui.editState(pid);
+    if (st.anchor > len.*) st.anchor = len.*;
 
     // 布局：按 '\n' 分段，段内按宽换行
     var lines: [MAX_LINES][]const u8 = @splat("");
@@ -96,7 +102,7 @@ pub fn textarea(
         if (caret.* >= starts[i]) caret_line = i;
     }
 
-    // 点击定位
+    // 点击定位 / 双击选词 / 三击全选
     if (it.clicked and inner_w > 0) {
         const top_now = topLine(caret_line, opts.rows);
         var row_i: usize = 0;
@@ -106,49 +112,133 @@ pub fn textarea(
         const target = @min(top_now + row_i, n - 1);
         caret.* = caretFromX(ui, lines[target], starts[target], inner_x, ui.input.mouse.x);
         caret_line = target;
+        const now = ui.time;
+        st.clicks = if (st.clicks > 0 and now - st.last_click <= 0.42) st.clicks +| 1 else 1;
+        st.last_click = now;
+        if (st.clicks == 2) {
+            const w = widgets.wordRange(buf[0..len.*], caret.*);
+            st.anchor = w.start;
+            caret.* = w.end;
+        } else if (st.clicks >= 3) {
+            st.anchor = 0;
+            caret.* = len.*;
+            st.clicks = 0;
+        } else {
+            st.anchor = caret.*;
+        }
+        // 选中后光标可能跨行了，重算一次
+        i = 0;
+        while (i < n) : (i += 1) {
+            if (caret.* >= starts[i]) caret_line = i;
+        }
     }
 
-    // 键盘编辑
+    // 键盘编辑（有选区时先按选区语义处理）
     if (it.focused) {
-        if (ui.input.keyPressed(.backspace) and caret.* > 0) {
-            const prev = prevCharStart(buf[0..len.*], caret.*);
-            removeRange(buf, len, prev, caret.*);
-            caret.* = prev;
-            changed = true;
-        }
-        if (ui.input.keyPressed(.delete) and caret.* < len.*) {
-            removeRange(buf, len, caret.*, utf8Step(buf[0..len.*], caret.*));
-            changed = true;
-        }
-        if (ui.input.keyPressed(.left) and caret.* > 0) caret.* = prevCharStart(buf[0..len.*], caret.*);
-        if (ui.input.keyPressed(.right) and caret.* < len.*) caret.* = utf8Step(buf[0..len.*], caret.*);
-        if (ui.input.keyPressed(.home)) caret.* = starts[caret_line];
-        if (ui.input.keyPressed(.end)) {
-            const e = starts[caret_line] + lines[caret_line].len;
-            caret.* = e;
-        }
-        if (ui.input.keyPressed(.up) and caret_line > 0) {
-            const col_w = ui.measureText(buf[starts[caret_line]..caret.*], theme.font_body).w;
-            caret.* = caretFromX(ui, lines[caret_line - 1], starts[caret_line - 1], inner_x, inner_x + col_w);
-        }
-        if (ui.input.keyPressed(.down) and caret_line + 1 < n) {
-            const col_w = ui.measureText(buf[starts[caret_line]..caret.*], theme.font_body).w;
-            caret.* = caretFromX(ui, lines[caret_line + 1], starts[caret_line + 1], inner_x, inner_x + col_w);
-        }
-        if (ui.input.keyPressed(.enter)) {
-            insertBytes(buf, len, caret.*, "\n");
-            caret.* += 1;
-            changed = true;
-        }
-        const chars = ui.input.charsSlice();
-        var ci: usize = 0;
-        while (ci < chars.len) {
-            const clen = std.unicode.utf8ByteSequenceLength(chars[ci]) catch 1;
-            if (ci + clen > chars.len) break;
-            insertBytes(buf, len, caret.*, chars[ci .. ci + clen]);
-            caret.* += clen;
-            changed = true;
-            ci += clen;
+        const shift = ui.input.mods.shift;
+        const ctrl = ui.input.mods.ctrl;
+        const a0 = @min(st.anchor, caret.*);
+        const b0 = @max(st.anchor, caret.*);
+        const has_sel = b0 > a0;
+
+        if (ctrl and ui.input.keyPressed(.A)) {
+            st.anchor = 0;
+            caret.* = len.*;
+        } else if (ctrl and opts.clipboard != null and
+            (ui.input.keyPressed(.C) or ui.input.keyPressed(.X) or ui.input.keyPressed(.V)))
+        {
+            const cb = opts.clipboard.?;
+            if (ui.input.keyPressed(.C)) {
+                if (has_sel) {
+                    if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+                }
+            } else if (ui.input.keyPressed(.X)) {
+                if (has_sel) {
+                    if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+                    removeRange(buf, len, a0, b0);
+                    caret.* = a0;
+                    changed = true;
+                }
+            } else if (cb.get) |get| {
+                var tmp: [1024]u8 = undefined;
+                const cn = get(cb.ctx, tmp[0..]);
+                if (cn > 0 and cn <= tmp.len and len.* - (b0 - a0) + cn <= buf.len) {
+                    removeRange(buf, len, a0, b0);
+                    insertBytes(buf, len, a0, tmp[0..cn]);
+                    caret.* = a0 + cn;
+                    changed = true;
+                }
+            }
+        } else {
+            if (has_sel and (ui.input.keyPressed(.backspace) or ui.input.keyPressed(.delete))) {
+                removeRange(buf, len, a0, b0);
+                caret.* = a0;
+                changed = true;
+            } else if (!has_sel) {
+                if (ui.input.keyPressed(.backspace) and caret.* > 0) {
+                    const prev = prevCharStart(buf[0..len.*], caret.*);
+                    removeRange(buf, len, prev, caret.*);
+                    caret.* = prev;
+                    changed = true;
+                }
+                if (ui.input.keyPressed(.delete) and caret.* < len.*) {
+                    removeRange(buf, len, caret.*, utf8Step(buf[0..len.*], caret.*));
+                    changed = true;
+                }
+            }
+            // 方向键 / Home / End / 上下：Shift = 只挪插入符（扩选），否则塌缩到选区边界
+            if (ui.input.keyPressed(.left)) {
+                caret.* = if (has_sel and !shift) a0 else prevCharStart(buf[0..len.*], caret.*);
+            }
+            if (ui.input.keyPressed(.right)) {
+                caret.* = if (has_sel and !shift) b0 else utf8Step(buf[0..len.*], caret.*);
+            }
+            if (ui.input.keyPressed(.home)) caret.* = starts[caret_line];
+            if (ui.input.keyPressed(.end)) {
+                const e = starts[caret_line] + lines[caret_line].len;
+                caret.* = e;
+            }
+            if (ui.input.keyPressed(.up) and caret_line > 0) {
+                const col_w = ui.measureText(buf[starts[caret_line]..caret.*], theme.font_body).w;
+                caret.* = caretFromX(ui, lines[caret_line - 1], starts[caret_line - 1], inner_x, inner_x + col_w);
+            }
+            if (ui.input.keyPressed(.down) and caret_line + 1 < n) {
+                const col_w = ui.measureText(buf[starts[caret_line]..caret.*], theme.font_body).w;
+                caret.* = caretFromX(ui, lines[caret_line + 1], starts[caret_line + 1], inner_x, inner_x + col_w);
+            }
+            if (ui.input.keyPressed(.enter)) {
+                if (has_sel) {
+                    const s0 = @min(st.anchor, caret.*);
+                    const s1 = @max(st.anchor, caret.*);
+                    removeRange(buf, len, s0, s1);
+                    caret.* = s0;
+                }
+                insertBytes(buf, len, caret.*, "\n");
+                caret.* += 1;
+                changed = true;
+            }
+            const chars = ui.input.charsSlice();
+            if (chars.len > 0) {
+                if (has_sel) {
+                    const s0 = @min(st.anchor, caret.*);
+                    const s1 = @max(st.anchor, caret.*);
+                    removeRange(buf, len, s0, s1);
+                    caret.* = s0;
+                    changed = true;
+                }
+                var ci: usize = 0;
+                while (ci < chars.len) {
+                    const clen = std.unicode.utf8ByteSequenceLength(chars[ci]) catch 1;
+                    if (ci + clen > chars.len) break;
+                    insertBytes(buf, len, caret.*, chars[ci .. ci + clen]);
+                    caret.* += clen;
+                    changed = true;
+                    ci += clen;
+                }
+            }
+            // Shift 扩选时保留锚点；其余情况锚点跟着插入符走
+            // （注意：这一行只能留在本分支里 —— 放到 if/else 外面会把 Ctrl+A 刚建好的选区立刻塌缩）
+            if (!shift or changed) st.anchor = caret.*;
         }
     }
 
@@ -167,6 +257,35 @@ pub fn textarea(
         if (caret.* >= starts2[i]) caret_line2 = i;
     }
     const top = topLine(caret_line2, opts.rows);
+
+    // 选区底色：按可视行分段画（跨行、整行选中、含换行符都连续）
+    const sa = @min(st.anchor, caret.*);
+    const sb = @max(st.anchor, caret.*);
+    if (it.focused and sb > sa) {
+        var r: usize = 0;
+        while (r < opts.rows and top + r < n2) : (r += 1) {
+            const li = top + r;
+            const ls = starts2[li];
+            const le = ls + lines2[li].len;
+            if (le < sa or ls > sb) continue;
+            const from = @max(ls, sa);
+            const to = @min(le, sb);
+            var x0 = inner_x + ui.measureText(buf[ls..from], theme.font_body).w;
+            var x1 = inner_x + ui.measureText(buf[ls..to], theme.font_body).w;
+            // 选区含这行的换行符时给 4px 宽度，否则跨行看着断开
+            if (to == le and sb > le) x1 += 4;
+            if (x0 < inner_x) x0 = inner_x;
+            const max_x = rect.x + rect.w - opts.pad;
+            if (x1 > max_x) x1 = max_x;
+            if (x1 <= x0) continue;
+            ui.addBox(.{
+                .x = x0,
+                .y = rect.y + opts.pad + opts.line_h * @as(f32, @floatFromInt(r)) + 2,
+                .w = x1 - x0,
+                .h = opts.line_h - 4,
+            }, .{ .fill = theme.withAlpha(theme.accent, 64), .radius = 2 });
+        }
+    }
 
     if (len.* == 0 and opts.placeholder.len > 0) {
         const pm = ui.measureText(opts.placeholder, theme.font_body);
