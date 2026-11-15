@@ -9,7 +9,9 @@
 //! - **剪贴板**：`CLIPBOARD` selection（`setClipboard` 当 owner，别的客户端来要就回 `UTF8_STRING`；
 //!   `getClipboard` 自己持有就直接给，否则 `XConvertSelection` + 120ms 超时往返，超时返回 0）；
 //! - **目录枚举**：`std.Io.Dir`（0.17 已移除 `std.fs.cwd()`），与 `bmpfile.zig` 同口径；
-//! - **文件拖放（XDND）**：暂未实现（`droppedFile` 返回 null），不假装成功；
+//! - **文件拖放（XDND v5）**：窗口声明 `XdndAware`，接受 `XdndPosition`（回 `XdndStatus` 表示 copy）、
+//!   `XdndDrop`（把 `text/uri-list` 转成属性）→ 解析 `file://` 行（支持 `%XX`）→ 下一帧 `input.dropped` 生效；
+//!   固定 4 个文件 / 单路径 260 字节，与 Win32 同口径；
 //! - **空闲节流**：`idle(ms)` 用 `poll()` 阻塞在 X 连接上，有事件立刻返回（同 Win32 口径）。
 //!
 //! 实测环境：Windows 11 + WSL2（Ubuntu）+ WSLg（XWayland，`DISPLAY=:0`）。
@@ -341,6 +343,22 @@ pub const Backend = struct {
     atom_prop: Atom = 0,
     clip_text: [4096]u8 = @splat(0),
     clip_len: usize = 0,
+    // ---- XDND 文件拖放
+    atom_xdnd_aware: Atom = 0,
+    atom_xdnd_enter: Atom = 0,
+    atom_xdnd_position: Atom = 0,
+    atom_xdnd_status: Atom = 0,
+    atom_xdnd_drop: Atom = 0,
+    atom_xdnd_finished: Atom = 0,
+    atom_xdnd_selection: Atom = 0,
+    atom_xdnd_action_copy: Atom = 0,
+    atom_uri_list: Atom = 0,
+    atom_drop_prop: Atom = 0,
+    /// 拖放源窗口（Drop 后要回 XdndFinished，可能要跨帧）
+    xdnd_src: Window = 0,
+    drops: DropList = .{},
+    /// 本帧有效的拖放条数（与 Win32 同口径："本帧事件"）
+    drop_active: u8 = 0,
 
     pub fn init(title: []const u8, width: u32, height: u32, show: bool) !Backend {
         const dpy = XOpenDisplay(null) orelse return error.PlatformNotImplemented;
@@ -365,6 +383,19 @@ pub const Backend = struct {
         self.atom_utf8 = XInternAtom(dpy, "UTF8_STRING", 0);
         self.atom_targets = XInternAtom(dpy, "TARGETS", 0);
         self.atom_prop = XInternAtom(dpy, "ZZUI_SELECTION", 0);
+        self.atom_xdnd_aware = XInternAtom(dpy, "XdndAware", 0);
+        self.atom_xdnd_enter = XInternAtom(dpy, "XdndEnter", 0);
+        self.atom_xdnd_position = XInternAtom(dpy, "XdndPosition", 0);
+        self.atom_xdnd_status = XInternAtom(dpy, "XdndStatus", 0);
+        self.atom_xdnd_drop = XInternAtom(dpy, "XdndDrop", 0);
+        self.atom_xdnd_finished = XInternAtom(dpy, "XdndFinished", 0);
+        self.atom_xdnd_selection = XInternAtom(dpy, "XdndSelection", 0);
+        self.atom_xdnd_action_copy = XInternAtom(dpy, "XdndActionCopy", 0);
+        self.atom_uri_list = XInternAtom(dpy, "text/uri-list", 0);
+        self.atom_drop_prop = XInternAtom(dpy, "ZZUI_DROP", 0);
+        // 告诉拖放源：本窗口接受 XDND v5
+        var ver = [_]Atom{5};
+        _ = XChangeProperty(dpy, self.win, self.atom_xdnd_aware, XA_ATOM, 32, PropModeReplace, @ptrCast(&ver), 1);
         var proto = [_]Atom{self.wm_delete};
         _ = XSetWMProtocols(dpy, self.win, &proto, 1);
 
@@ -496,6 +527,9 @@ pub const Backend = struct {
         self.input.wheel = 0;
         self.input.click = null;
         self.input.right_click = null;
+        // 拖放是「本帧事件」：上一帧解析到的路径在这一帧有效，随后清空
+        self.input.dropped = self.drop_active;
+        self.drop_active = 0;
 
         var ev: XEvent = undefined;
         while (XPending(dpy) > 0) {
@@ -599,9 +633,18 @@ pub const Backend = struct {
             },
             ClientMessage => {
                 const cm = ev.client;
-                if (cm.message_type == self.wm_protocols and cm.data.l[0] == @as(c_long, @intCast(self.wm_delete))) {
-                    self.closed = true;
+                if (cm.message_type == self.wm_protocols) {
+                    if (cm.data.l[0] == @as(c_long, @intCast(self.wm_delete))) self.closed = true;
+                } else if (cm.message_type == self.atom_xdnd_position) {
+                    self.xdndAccept(cm);
+                } else if (cm.message_type == self.atom_xdnd_drop) {
+                    self.xdndDrop(cm);
+                } else if (cm.message_type == self.atom_xdnd_enter) {
+                    self.xdnd_src = @intCast(cm.data.l[0]);
                 }
+            },
+            SelectionNotify => {
+                if (ev.selection.property == self.atom_drop_prop) self.readDrop();
             },
             SelectionRequest => self.serveSelection(ev.selreq),
             SelectionClear => {
@@ -664,10 +707,6 @@ pub const Backend = struct {
 
     pub fn pixels(self: *Backend) []u8 {
         return self.buf;
-    }
-
-    pub fn droppedFile(_: *Backend, _: usize) ?[]const u8 {
-        return null; // XDND 未接（见文件头）
     }
 
     pub fn saveSurface(self: *Backend, path: []const u8) !void {
@@ -832,6 +871,75 @@ pub const Backend = struct {
         return count;
     }
 
+    /// 拖放源在报位置：回一个 `XdndStatus`（接受、动作为 copy）。
+    fn xdndAccept(self: *Backend, cm: XClientMessageEvent) void {
+        const dpy = self.dpy orelse return;
+        const src: Window = @intCast(cm.data.l[0]);
+        self.xdnd_src = src;
+        var status = XEvent{ .client = .{
+            .type = ClientMessage,
+            .serial = 0,
+            .send_event = 1,
+            .display = dpy,
+            .window = src,
+            .message_type = self.atom_xdnd_status,
+            .format = 32,
+            .data = .{ .l = .{ @intCast(self.win), 1, 0, 0, @intCast(self.atom_xdnd_action_copy) } },
+        } };
+        _ = XSendEvent(dpy, src, 0, 0, &status);
+        _ = XFlush(dpy);
+    }
+
+    /// 松手：把 `text/uri-list` 转成本窗口属性，`SelectionNotify` 里再解析。
+    fn xdndDrop(self: *Backend, cm: XClientMessageEvent) void {
+        const dpy = self.dpy orelse return;
+        const src: Window = @intCast(cm.data.l[0]);
+        self.xdnd_src = src;
+        const when: c_ulong = @intCast(cm.data.l[2]);
+        _ = XConvertSelection(dpy, self.atom_xdnd_selection, self.atom_uri_list, self.atom_drop_prop, self.win, when);
+        _ = XFlush(dpy);
+    }
+
+    /// 读回 `text/uri-list` → 解析成路径表；给源窗口回 `XdndFinished`。
+    fn readDrop(self: *Backend) void {
+        const dpy = self.dpy orelse return;
+        var actual_type: Atom = 0;
+        var actual_format: c_int = 0;
+        var nitems: c_ulong = 0;
+        var after: c_ulong = 0;
+        var data: ?[*]u8 = null;
+        const rc = XGetWindowProperty(dpy, self.win, self.atom_drop_prop, 0, 8192, 1, 0, &actual_type, &actual_format, &nitems, &after, &data);
+        var ok = false;
+        if (rc == 0 and actual_type != 0) {
+            if (data) |d| {
+                parseUriList(d[0..@intCast(nitems)], &self.drops);
+                ok = self.drops.n > 0;
+            }
+        }
+        if (data) |d| _ = XFree(d);
+        self.drop_active = self.drops.n;
+
+        if (self.xdnd_src != 0) {
+            var fin = XEvent{ .client = .{
+                .type = ClientMessage,
+                .serial = 0,
+                .send_event = 1,
+                .display = dpy,
+                .window = self.xdnd_src,
+                .message_type = self.atom_xdnd_finished,
+                .format = 32,
+                .data = .{ .l = .{ @intCast(self.win), if (ok) 1 else 0, @intCast(self.atom_xdnd_action_copy), 0, 0 } },
+            } };
+            _ = XSendEvent(dpy, self.xdnd_src, 0, 0, &fin);
+            _ = XFlush(dpy);
+        }
+    }
+
+    pub fn droppedFile(self: *Backend, i: usize) ?[]const u8 {
+        if (i >= self.drops.n) return null;
+        return self.drops.at(i);
+    }
+
     pub fn getClipboard(self: *Backend, out: []u8) usize {
         if (out.len == 0) return 0;
         const dpy = self.dpy orelse return 0;
@@ -887,8 +995,84 @@ pub const Backend = struct {
     }
 };
 
-fn mapKeysym(sym: c_ulong) ?t.Key {
-    return switch (sym) {
+// ------------------------------------------------------------------ 拖放路径表
+
+/// XDND 一次最多收多少个文件、单个路径最长多少字节（与 Win32 的 `MAX_DROPS`/`DROP_PATH_MAX` 同口径）。
+pub const MAX_DROPS = 4;
+pub const DROP_PATH_MAX = 260;
+
+pub const DropList = struct {
+    paths: [MAX_DROPS][DROP_PATH_MAX]u8 = @splat(@splat(0)),
+    lens: [MAX_DROPS]u16 = @splat(0),
+    n: u8 = 0,
+
+    pub fn at(self: *const DropList, i: usize) []const u8 {
+        return self.paths[i][0..self.lens[i]];
+    }
+
+    fn push(self: *DropList, path: []const u8) void {
+        if (self.n >= MAX_DROPS or path.len == 0) return;
+        const take = @min(path.len, DROP_PATH_MAX);
+        const i: usize = self.n;
+        @memcpy(self.paths[i][0..take], path[0..take]);
+        self.lens[i] = @intCast(take);
+        self.n += 1;
+    }
+};
+
+/// 解析 `text/uri-list`：每行一个 `file://` URI，`#` 开头是注释，支持 `%XX` 转义。
+/// 不是 `file://` 的行直接跳过（浏览器拖过来的链接我们也不便处理）。
+pub fn parseUriList(text: []const u8, list: *DropList) void {
+    var rest = text;
+    while (rest.len > 0) {
+        const nl = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+        var line = rest[0..nl];
+        rest = if (nl < rest.len) rest[nl + 1 ..] else rest[rest.len..];
+        if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
+        if (line.len == 0 or line[0] == '#') continue;
+        const prefix = "file://";
+        if (!std.mem.startsWith(u8, line, prefix)) continue;
+        var body = line[prefix.len..];
+        // file:///path（空 host）或 file://localhost/path
+        if (std.mem.startsWith(u8, body, "localhost")) body = body["localhost".len..];
+        var decoded: [DROP_PATH_MAX]u8 = undefined;
+        const n = percentDecode(body, decoded[0..]);
+        if (n > 0) list.push(decoded[0..n]);
+    }
+}
+
+/// `%XX` 解码（UTF-8 按字节处理；非法转义原样保留）。
+fn percentDecode(src: []const u8, dst: []u8) usize {
+    var i: usize = 0;
+    var o: usize = 0;
+    while (i < src.len and o < dst.len) {
+        if (src[i] == '%' and i + 2 < src.len) {
+            const hi = hexNibble(src[i + 1]);
+            const lo = hexNibble(src[i + 2]);
+            if (hi != null and lo != null) {
+                dst[o] = (hi.? << 4) | lo.?;
+                o += 1;
+                i += 3;
+                continue;
+            }
+        }
+        dst[o] = src[i];
+        o += 1;
+        i += 1;
+    }
+    return o;
+}
+
+fn hexNibble(c: u8) ?u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => null,
+    };
+}
+
+fn mapKeysym(sym: c_ulong) ?t.Key {    return switch (sym) {
         0xff08 => .backspace,
         0xff09 => .tab,
         0xff0d, 0xff8d => .enter,

@@ -193,7 +193,7 @@ test "platform: headless App paints pixels and saves them" {
     try std.testing.expectEqual(@as(usize, 54 + 120 * 80 * 4), data.len);
 }
 
-test "platform: x11 backend is a stub off Linux (never silently opens a window)" {    // Windows/macOS 上 `platform/x11_stub.zig` 必须明确报「未实现」；
+test "platform: x11 backend is a stub off Linux (never silently opens a window)" { // Windows/macOS 上 `platform/x11_stub.zig` 必须明确报「未实现」；
     // Linux 上这里会真的去连 X（没 DISPLAY 时也是同一个错误），两种情况都不该返回成功。
     const r = platform.Backend.initX11("zzui-test", 64, 64, false);
     if (@import("builtin").os.tag == .linux) {
@@ -208,7 +208,8 @@ test "platform: x11 backend is a stub off Linux (never silently opens a window)"
     }
 }
 
-test "platform: x11 listDir enumerates a real directory (Linux only)" {    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+test "platform: x11 listDir enumerates a real directory (Linux only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
     const x11 = @import("platform/x11.zig");
     var b = x11.Backend{};
     var out: [32]types.FileEntry = undefined;
@@ -222,8 +223,7 @@ test "platform: x11 listDir enumerates a real directory (Linux only)" {    if (c
     try std.testing.expect(found_tmp);
 }
 
-test "platform: x11 clipboard round trips (Linux + a display only)" {
-    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+test "platform: x11 clipboard round trips (Linux + a display only)" {    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
     const x11 = @import("platform/x11.zig");
     // 没有 DISPLAY 就跳过（CI 里的 `zig build test` 就是这种情况）
     var b = x11.Backend.init("zzui-clip-test", 32, 32, false) catch return error.SkipZigTest;
@@ -233,4 +233,29 @@ test "platform: x11 clipboard round trips (Linux + a display only)" {
     var buf: [64]u8 = undefined;
     const n = b.getClipboard(buf[0..]);
     try std.testing.expectEqualStrings("hello \xe4\xb8\xad", buf[0..n]);
+}
+
+test "platform: x11 parses text/uri-list into drop paths (Linux only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const x11 = @import("platform/x11.zig");
+
+    var list = x11.DropList{};
+    x11.parseUriList("file:///tmp/a%20b.txt\r\n# comment\r\nfile://localhost/home/u/x\nhttp://example.com/x\nfile:///tmp/c\n", &list);
+    try std.testing.expectEqual(@as(u8, 3), list.n);
+    try std.testing.expectEqualStrings("/tmp/a b.txt", list.at(0));
+    try std.testing.expectEqualStrings("/home/u/x", list.at(1));
+    try std.testing.expectEqualStrings("/tmp/c", list.at(2));
+
+    // 固定容量 4：超出的丢掉，不能越界
+    var many = x11.DropList{};
+    x11.parseUriList("file:///1\nfile:///2\nfile:///3\nfile:///4\nfile:///5\n", &many);
+    try std.testing.expectEqual(@as(u8, 4), many.n);
+    try std.testing.expectEqualStrings("/4", many.at(3));
+
+    // 空串与非法转义：不崩、不丢字节
+    var edge = x11.DropList{};
+    x11.parseUriList("", &edge);
+    try std.testing.expectEqual(@as(u8, 0), edge.n);
+    x11.parseUriList("file:///tmp/100%zz\n", &edge);
+    try std.testing.expectEqualStrings("/tmp/100%zz", edge.at(0));
 }
