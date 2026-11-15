@@ -6,8 +6,11 @@
 //!   文本落在帧缓冲里，层级顺序正确）。**非 ASCII（中文/emoji）目前不画**，只按字号推进光标 ——
 //!   要中文得接 Xft/fontconfig（`apt install libxft-dev`），文件头记着这条待办；
 //! - **像素格式**：X 服务端是 0x00RRGGBB，我们是 BGRA 字节序，`present` 时逐像素换 R/B；
-//! - **剪贴板 / 文件拖放 / 目录枚举**：暂未实现（分别返回 0 / 0 / -1），不假装成功；
-//! - **空闲节流**：`idle(ms)` 用 `select()` 阻塞在 X 连接上，有事件立刻返回（同 Win32 口径）。
+//! - **剪贴板**：`CLIPBOARD` selection（`setClipboard` 当 owner，别的客户端来要就回 `UTF8_STRING`；
+//!   `getClipboard` 自己持有就直接给，否则 `XConvertSelection` + 120ms 超时往返，超时返回 0）；
+//! - **目录枚举**：`std.Io.Dir`（0.17 已移除 `std.fs.cwd()`），与 `bmpfile.zig` 同口径；
+//! - **文件拖放（XDND）**：暂未实现（`droppedFile` 返回 null），不假装成功；
+//! - **空闲节流**：`idle(ms)` 用 `poll()` 阻塞在 X 连接上，有事件立刻返回（同 Win32 口径）。
 //!
 //! 实测环境：Windows 11 + WSL2（Ubuntu）+ WSLg（XWayland，`DISPLAY=:0`）。
 
@@ -37,6 +40,13 @@ const KeyRelease = 3;
 const MotionNotify = 6;
 const ConfigureNotify = 22;
 const DestroyNotify = 17;
+const SelectionClear = 29;
+const SelectionRequest = 30;
+const SelectionNotify = 31;
+/// XA_ATOM / XA_STRING 是预定义 atom 的固定编号
+const XA_STRING: Atom = 31;
+const XA_ATOM: Atom = 4;
+const PropModeReplace: c_int = 0;
 
 const KeyPressMask: c_long = 1 << 0;
 const KeyReleaseMask: c_long = 1 << 1;
@@ -195,6 +205,31 @@ const XClientMessageEvent = extern struct {
     data: extern union { b: [20]u8, s: [10]c_short, l: [5]c_long },
 };
 
+const XSelectionEvent = extern struct {
+    type: c_int,
+    serial: c_ulong,
+    send_event: c_int,
+    display: *Display,
+    requestor: Window,
+    selection: Atom,
+    target: Atom,
+    property: Atom,
+    time: c_ulong,
+};
+
+const XSelectionRequestEvent = extern struct {
+    type: c_int,
+    serial: c_ulong,
+    send_event: c_int,
+    display: *Display,
+    owner: Window,
+    requestor: Window,
+    selection: Atom,
+    target: Atom,
+    property: Atom,
+    time: c_ulong,
+};
+
 const XEvent = extern union {
     type: c_int,
     key: XKeyEvent,
@@ -202,6 +237,8 @@ const XEvent = extern union {
     motion: XMotionEvent,
     configure: XConfigureEvent,
     client: XClientMessageEvent,
+    selection: XSelectionEvent,
+    selreq: XSelectionRequestEvent,
     pad: [24]c_long,
 };
 
@@ -250,6 +287,14 @@ extern fn XFreePixmap(*Display, Pixmap) c_int;
 extern fn XGetImage(*Display, XID, c_int, c_int, c_uint, c_uint, c_ulong, c_int) ?*XImage;
 extern fn XLookupString(*const XKeyEvent, [*]u8, c_int, ?*c_ulong, ?*anyopaque) c_int;
 extern fn XkbSetDetectableAutoRepeat(*Display, c_int, ?*c_int) c_int;
+extern fn XSetSelectionOwner(*Display, Atom, Window, c_ulong) c_int;
+extern fn XGetSelectionOwner(*Display, Atom) Window;
+extern fn XConvertSelection(*Display, Atom, Atom, Atom, Window, c_ulong) c_int;
+extern fn XChangeProperty(*Display, Window, Atom, Atom, c_int, c_int, [*]const u8, c_int) c_int;
+extern fn XGetWindowProperty(*Display, Window, Atom, c_long, c_long, c_int, Atom, *Atom, *c_int, *c_ulong, *c_ulong, *?[*]u8) c_int;
+extern fn XDeleteProperty(*Display, Window, Atom) c_int;
+extern fn XSendEvent(*Display, Window, c_int, c_long, *XEvent) c_int;
+extern fn XFree(?*anyopaque) c_int;
 
 // ------------------------------------------------------------------ 字形图集
 
@@ -289,6 +334,13 @@ pub const Backend = struct {
     btn1: bool = false,
     btn3: bool = false,
     last_ms: f64 = 0,
+    // ---- 剪贴板（X selections）：atom + 自己持有的文本
+    atom_clipboard: Atom = 0,
+    atom_utf8: Atom = 0,
+    atom_targets: Atom = 0,
+    atom_prop: Atom = 0,
+    clip_text: [4096]u8 = @splat(0),
+    clip_len: usize = 0,
 
     pub fn init(title: []const u8, width: u32, height: u32, show: bool) !Backend {
         const dpy = XOpenDisplay(null) orelse return error.PlatformNotImplemented;
@@ -309,7 +361,11 @@ pub const Backend = struct {
 
         self.wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", 0);
         self.wm_delete = XInternAtom(dpy, "WM_DELETE_WINDOW", 0);
-        var proto = [_]Atom{ self.wm_delete };
+        self.atom_clipboard = XInternAtom(dpy, "CLIPBOARD", 0);
+        self.atom_utf8 = XInternAtom(dpy, "UTF8_STRING", 0);
+        self.atom_targets = XInternAtom(dpy, "TARGETS", 0);
+        self.atom_prop = XInternAtom(dpy, "ZZUI_SELECTION", 0);
+        var proto = [_]Atom{self.wm_delete};
         _ = XSetWMProtocols(dpy, self.win, &proto, 1);
 
         self.gc = XCreateGC(dpy, self.win, 0, null);
@@ -444,106 +500,143 @@ pub const Backend = struct {
         var ev: XEvent = undefined;
         while (XPending(dpy) > 0) {
             if (XNextEvent(dpy, &ev) != 0) break;
-            switch (ev.type) {
-                Expose => {},
-                ConfigureNotify => {
-                    const ce = ev.configure;
-                    if (ce.width > 0 and ce.height > 0) {
-                        const w: u32 = @intCast(ce.width);
-                        const h: u32 = @intCast(ce.height);
-                        if (w != self.px_w or h != self.px_h) {
-                            self.px_w = w;
-                            self.px_h = h;
-                            self.deallocSurface();
-                            self.allocSurface();
-                            if (self.img) |img| {
-                                img.data = null;
-                                _ = XDestroyImage(img);
-                            }
-                            self.img = null;
-                            const scr = XDefaultScreen(dpy);
-                            self.img = XCreateImage(dpy, XDefaultVisual(dpy, scr), @intCast(XDefaultDepth(dpy, scr)), ZPixmap, 0, @ptrCast(self.xbuf.ptr), w, h, 32, 0);
-                        }
-                    }
-                },
-                MotionNotify => {
-                    const me = ev.motion;
-                    self.input.mouse = .{ .x = @floatFromInt(me.x), .y = @floatFromInt(me.y) };
-                    self.input.down = (me.state & Button1Mask) != 0;
-                },
-                ButtonPress => {
-                    const be = ev.button;
-                    self.input.mouse = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
-                    switch (be.button) {
-                        1 => {
-                            self.btn1 = true;
-                            self.input.down = true;
-                            self.input.pressed = true;
-                        },
-                        3 => self.btn3 = true,
-                        4 => self.input.wheel += 1,
-                        5 => self.input.wheel -= 1,
-                        else => {},
-                    }
-                },
-                ButtonRelease => {
-                    const be = ev.button;
-                    self.input.mouse = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
-                    switch (be.button) {
-                        1 => {
-                            if (self.btn1) {
-                                self.input.click = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
-                            }
-                            self.btn1 = false;
-                            self.input.down = false;
-                        },
-                        3 => {
-                            if (self.btn3) self.input.right_click = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
-                            self.btn3 = false;
-                        },
-                        else => {},
-                    }
-                },
-                KeyPress => {
-                    const ke = ev.key;
-                    var buf: [8]u8 = @splat(0);
-                    var sym: c_ulong = 0;
-                    const n = XLookupString(&ke, &buf, buf.len, &sym, null);
-                    if (mapKeysym(sym)) |k| self.input.addKey(k);
-                    if (n > 0) {
-                        // 只取可打印 ASCII：核心字体画不了别的，别把乱码塞进输入框
-                        if (buf[0] >= 32 and buf[0] < 127) self.input.addCharBytes(buf[0..1]);
-                    }
-                    self.input.mods = .{
-                        .ctrl = (ke.state & ControlMask) != 0,
-                        .shift = (ke.state & ShiftMask) != 0,
-                        .alt = (ke.state & Mod1Mask) != 0,
-                        .win = (ke.state & Mod4Mask) != 0,
-                    };
-                },
-                KeyRelease => {
-                    const ke = ev.key;
-                    self.input.mods = .{
-                        .ctrl = (ke.state & ControlMask) != 0,
-                        .shift = (ke.state & ShiftMask) != 0,
-                        .alt = (ke.state & Mod1Mask) != 0,
-                        .win = (ke.state & Mod4Mask) != 0,
-                    };
-                },
-                ClientMessage => {
-                    const cm = ev.client;
-                    if (cm.message_type == self.wm_protocols and cm.data.l[0] == @as(c_long, @intCast(self.wm_delete))) {
-                        self.closed = true;
-                    }
-                },
-                DestroyNotify => self.closed = true,
-                else => {},
-            }
+            self.handleEvent(ev);
         }
         if (self.closed) return false;
         // 低帧率保护：X 无消息时别把 CPU 打满（用 1ms 超时等 X 连接，空 fd 数组会让 poll 报 EFAULT）
         self.idle(1);
         return true;
+    }
+
+    /// 单个 X 事件的处理（`poll` 与剪贴板往返共用，免得两处各写一份）。
+    fn handleEvent(self: *Backend, ev: XEvent) void {
+        const dpy = self.dpy orelse return;
+        switch (ev.type) {
+            Expose => {},
+            ConfigureNotify => {
+                const ce = ev.configure;
+                if (ce.width > 0 and ce.height > 0) {
+                    const w: u32 = @intCast(ce.width);
+                    const h: u32 = @intCast(ce.height);
+                    if (w != self.px_w or h != self.px_h) {
+                        self.px_w = w;
+                        self.px_h = h;
+                        self.deallocSurface();
+                        self.allocSurface();
+                        if (self.img) |img| {
+                            img.data = null;
+                            _ = XDestroyImage(img);
+                        }
+                        self.img = null;
+                        const scr = XDefaultScreen(dpy);
+                        self.img = XCreateImage(dpy, XDefaultVisual(dpy, scr), @intCast(XDefaultDepth(dpy, scr)), ZPixmap, 0, @ptrCast(self.xbuf.ptr), w, h, 32, 0);
+                    }
+                }
+            },
+            MotionNotify => {
+                const me = ev.motion;
+                self.input.mouse = .{ .x = @floatFromInt(me.x), .y = @floatFromInt(me.y) };
+                self.input.down = (me.state & Button1Mask) != 0;
+            },
+            ButtonPress => {
+                const be = ev.button;
+                self.input.mouse = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
+                switch (be.button) {
+                    1 => {
+                        self.btn1 = true;
+                        self.input.down = true;
+                        self.input.pressed = true;
+                    },
+                    3 => self.btn3 = true,
+                    4 => self.input.wheel += 1,
+                    5 => self.input.wheel -= 1,
+                    else => {},
+                }
+            },
+            ButtonRelease => {
+                const be = ev.button;
+                self.input.mouse = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
+                switch (be.button) {
+                    1 => {
+                        if (self.btn1) {
+                            self.input.click = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
+                        }
+                        self.btn1 = false;
+                        self.input.down = false;
+                    },
+                    3 => {
+                        if (self.btn3) self.input.right_click = .{ .x = @floatFromInt(be.x), .y = @floatFromInt(be.y) };
+                        self.btn3 = false;
+                    },
+                    else => {},
+                }
+            },
+            KeyPress => {
+                const ke = ev.key;
+                var buf: [8]u8 = @splat(0);
+                var sym: c_ulong = 0;
+                const n = XLookupString(&ke, &buf, buf.len, &sym, null);
+                if (mapKeysym(sym)) |k| self.input.addKey(k);
+                if (n > 0) {
+                    // 只取可打印 ASCII：核心字体画不了别的，别把乱码塞进输入框
+                    if (buf[0] >= 32 and buf[0] < 127) self.input.addCharBytes(buf[0..1]);
+                }
+                self.input.mods = .{
+                    .ctrl = (ke.state & ControlMask) != 0,
+                    .shift = (ke.state & ShiftMask) != 0,
+                    .alt = (ke.state & Mod1Mask) != 0,
+                    .win = (ke.state & Mod4Mask) != 0,
+                };
+            },
+            KeyRelease => {
+                const ke = ev.key;
+                self.input.mods = .{
+                    .ctrl = (ke.state & ControlMask) != 0,
+                    .shift = (ke.state & ShiftMask) != 0,
+                    .alt = (ke.state & Mod1Mask) != 0,
+                    .win = (ke.state & Mod4Mask) != 0,
+                };
+            },
+            ClientMessage => {
+                const cm = ev.client;
+                if (cm.message_type == self.wm_protocols and cm.data.l[0] == @as(c_long, @intCast(self.wm_delete))) {
+                    self.closed = true;
+                }
+            },
+            SelectionRequest => self.serveSelection(ev.selreq),
+            SelectionClear => {
+                if (ev.selection.selection == self.atom_clipboard) self.clip_len = 0;
+            },
+            DestroyNotify => self.closed = true,
+            else => {},
+        }
+    }
+
+    /// 别人来要剪贴板内容：把文本写进对方指定的 property，再回一个 SelectionNotify。
+    fn serveSelection(self: *Backend, rq: XSelectionRequestEvent) void {
+        const dpy = self.dpy orelse return;
+        var notify = XEvent{ .selection = .{
+            .type = SelectionNotify,
+            .serial = 0,
+            .send_event = 0,
+            .display = dpy,
+            .requestor = rq.requestor,
+            .selection = rq.selection,
+            .target = rq.target,
+            .property = 0,
+            .time = rq.time,
+        } };
+        const prop: Atom = if (rq.property != 0) rq.property else rq.target;
+        if (rq.target == self.atom_targets) {
+            var targets = [_]Atom{ self.atom_utf8, XA_STRING, self.atom_targets };
+            _ = XChangeProperty(dpy, rq.requestor, prop, XA_ATOM, 32, PropModeReplace, @ptrCast(&targets), targets.len);
+            notify.selection.property = prop;
+        } else if (rq.target == self.atom_utf8 or rq.target == XA_STRING) {
+            _ = XChangeProperty(dpy, rq.requestor, prop, rq.target, 8, PropModeReplace, &self.clip_text, @intCast(self.clip_len));
+            notify.selection.property = prop;
+        }
+        _ = XSendEvent(dpy, rq.requestor, 0, 0, &notify);
+        _ = XFlush(dpy);
     }
 
     pub fn size(self: *Backend) t.Size {
@@ -700,15 +793,98 @@ pub const Backend = struct {
         return .{ .w = w, .h = size_px * 1.35 };
     }
 
-    pub fn listDir(_: *Backend, _: []const u8, _: []t.FileEntry, _: []u8, _: bool) i32 {
-        return -1; // std.fs 目录枚举待接（见文件头）
+    /// 列出目录（`files.zig` 的默认数据源）。返回条目数或 -1。
+    /// 0.17 的文件 API 都挂在 `std.Io.Dir` 上（`std.fs.cwd()` 已移除），用法与 `bmpfile.zig` 同口径。
+    pub fn listDir(_: *Backend, path: []const u8, out: []t.FileEntry, names: []u8, hidden: bool) i32 {
+        if (path.len == 0) return -1;
+        var threaded: std.Io.Threaded = .init(std.heap.page_allocator, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+
+        var dir = std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true }) catch return -1;
+        defer dir.close(io);
+
+        var it = dir.iterate();
+        var count: i32 = 0;
+        var used: usize = 0;
+        while (it.next(io) catch null) |e| {
+            if (std.mem.eql(u8, e.name, ".") or std.mem.eql(u8, e.name, "..")) continue;
+            if (!hidden and e.name.len > 0 and e.name[0] == '.') continue;
+            if (count >= out.len) break;
+            if (used + e.name.len > names.len) break;
+
+            @memcpy(names[used .. used + e.name.len], e.name);
+            var fsize: u64 = 0;
+            var modified: i64 = 0;
+            if (dir.statFile(io, e.name, .{})) |st| {
+                fsize = st.size;
+                modified = @intCast(@divTrunc(st.mtime.nanoseconds, std.time.ns_per_s));
+            } else |_| {}
+            out[@intCast(count)] = .{
+                .name = names[used .. used + e.name.len],
+                .dir = e.kind == .directory,
+                .size = fsize,
+                .modified = modified,
+            };
+            used += e.name.len;
+            count += 1;
+        }
+        return count;
     }
 
-    pub fn getClipboard(_: *Backend, _: []u8) usize {
-        return 0; // X selections 需要事件循环，未接
+    pub fn getClipboard(self: *Backend, out: []u8) usize {
+        if (out.len == 0) return 0;
+        const dpy = self.dpy orelse return 0;
+        // 自己就是 owner：不用往返，直接给本地副本
+        if (self.clip_len > 0 and XGetSelectionOwner(dpy, self.atom_clipboard) == self.win) {
+            const n = @min(self.clip_len, out.len);
+            @memcpy(out[0..n], self.clip_text[0..n]);
+            return n;
+        }
+        // 向别的客户端要：转成 UTF8_STRING 到自己的 property，再从事件里读回来
+        _ = XConvertSelection(dpy, self.atom_clipboard, self.atom_utf8, self.atom_prop, self.win, 0);
+        _ = XFlush(dpy);
+        const deadline = nowMs() + 120.0;
+        var ev: XEvent = undefined;
+        while (nowMs() < deadline) {
+            while (XPending(dpy) > 0) {
+                if (XNextEvent(dpy, &ev) != 0) break;
+                if (ev.type == SelectionNotify) {
+                    const se = ev.selection;
+                    if (se.property == 0) return 0; // owner 拒绝
+                    var actual_type: Atom = 0;
+                    var actual_format: c_int = 0;
+                    var nitems: c_ulong = 0;
+                    var after: c_ulong = 0;
+                    var data: ?[*]u8 = null;
+                    const rc = XGetWindowProperty(dpy, self.win, se.property, 0, @intCast(out.len), 1, 0, &actual_type, &actual_format, &nitems, &after, &data);
+                    defer {
+                        if (data) |d| _ = XFree(d);
+                    }
+                    if (rc != 0 or actual_type == 0) return 0;
+                    if (data) |d| {
+                        const n = @min(@as(usize, @intCast(nitems)), out.len);
+                        @memcpy(out[0..n], d[0..n]);
+                        return n;
+                    }
+                    return 0;
+                }
+                self.handleEvent(ev);
+            }
+            self.idle(4);
+        }
+        return 0;
     }
 
-    pub fn setClipboard(_: *Backend, _: []const u8) void {}
+    pub fn setClipboard(self: *Backend, text: []const u8) void {
+        const n = @min(text.len, self.clip_text.len);
+        @memcpy(self.clip_text[0..n], text[0..n]);
+        self.clip_len = n;
+        if (self.dpy) |dpy| {
+            _ = XSetSelectionOwner(dpy, self.atom_clipboard, self.win, 0);
+            _ = XFlush(dpy);
+        }
+    }
 };
 
 fn mapKeysym(sym: c_ulong) ?t.Key {
@@ -728,8 +904,8 @@ fn mapKeysym(sym: c_ulong) ?t.Key {
         0xff63 => .insert,
         0xffff => .delete,
         0x20 => .space,
-        0x30...0x39 => @enumFromInt(@as(u8, @intCast(sym))), // 0..9
-        0x61...0x7a => @enumFromInt(@as(u8, @intCast(sym - 0x20))), // a-z → A-Z
+        0x30...0x39 => @fromBackingInt(@intCast(@as(u8, @intCast(sym)))), // 0..9
+        0x61...0x7a => @fromBackingInt(@intCast(@as(u8, @intCast(sym - 0x20)))), // a-z → A-Z
         0x3b => .semicolon,
         0x3d => .equal,
         0x2c => .comma,
@@ -741,7 +917,7 @@ fn mapKeysym(sym: c_ulong) ?t.Key {
         0x5c => .backslash,
         0x5d => .bracket_right,
         0x27 => .quote,
-        0xffbe...0xffc9 => @enumFromInt(@as(u8, @intCast(112 + (sym - 0xffbe)))),
+        0xffbe...0xffc9 => @fromBackingInt(@intCast(@as(u8, @intCast(112 + (sym - 0xffbe))))),
         else => null,
     };
 }

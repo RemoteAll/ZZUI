@@ -9,6 +9,7 @@ const bmpfile = @import("bmpfile.zig");
 const core = @import("core.zig");
 const platform = @import("platform.zig");
 const theme = @import("theme.zig");
+const types = @import("types.zig");
 const t = @import("types.zig");
 
 const tmp_name = "zzui-test-bmpfile.bmp";
@@ -29,7 +30,8 @@ fn removeQuiet(path: []const u8) void {
 
 // ---------------------------------------------------------------- 后端契约
 
-test "platform: null backend honours the size/scale/meter contract" {    var b = try platform.Backend.initNull(64, 32);
+test "platform: null backend honours the size/scale/meter contract" {
+    var b = try platform.Backend.initNull(64, 32);
     defer b.deinit();
 
     const sz = b.size();
@@ -191,8 +193,7 @@ test "platform: headless App paints pixels and saves them" {
     try std.testing.expectEqual(@as(usize, 54 + 120 * 80 * 4), data.len);
 }
 
-test "platform: x11 backend is a stub off Linux (never silently opens a window)" {
-    // Windows/macOS 上 `platform/x11_stub.zig` 必须明确报「未实现」；
+test "platform: x11 backend is a stub off Linux (never silently opens a window)" {    // Windows/macOS 上 `platform/x11_stub.zig` 必须明确报「未实现」；
     // Linux 上这里会真的去连 X（没 DISPLAY 时也是同一个错误），两种情况都不该返回成功。
     const r = platform.Backend.initX11("zzui-test", 64, 64, false);
     if (@import("builtin").os.tag == .linux) {
@@ -205,4 +206,31 @@ test "platform: x11 backend is a stub off Linux (never silently opens a window)"
     } else {
         try std.testing.expectError(error.PlatformNotImplemented, r);
     }
+}
+
+test "platform: x11 listDir enumerates a real directory (Linux only)" {    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const x11 = @import("platform/x11.zig");
+    var b = x11.Backend{};
+    var out: [32]types.FileEntry = undefined;
+    var names: [4096]u8 = undefined;
+    const n = b.listDir("/", out[0..], names[0..], false);
+    try std.testing.expect(n > 0);
+    var found_tmp = false;
+    for (out[0..@intCast(n)]) |e| {
+        if (e.dir and std.mem.eql(u8, e.name, "tmp")) found_tmp = true;
+    }
+    try std.testing.expect(found_tmp);
+}
+
+test "platform: x11 clipboard round trips (Linux + a display only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const x11 = @import("platform/x11.zig");
+    // 没有 DISPLAY 就跳过（CI 里的 `zig build test` 就是这种情况）
+    var b = x11.Backend.init("zzui-clip-test", 32, 32, false) catch return error.SkipZigTest;
+    defer b.deinit();
+
+    b.setClipboard("hello \xe4\xb8\xad");
+    var buf: [64]u8 = undefined;
+    const n = b.getClipboard(buf[0..]);
+    try std.testing.expectEqualStrings("hello \xe4\xb8\xad", buf[0..n]);
 }
