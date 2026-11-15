@@ -626,6 +626,27 @@ if (Test-Path 'zig-out/bin/zzui-devtools-x64.exe') {
     Skip "devtools" "zzui-devtools-x64.exe not found"
 }
 
+Write-Host "== 1.11 Linux tests under WSL (cross-compiled on Windows, run natively) =="
+# 口径：**不需要在 WSL 里装 Zig** —— 用本机 Zig 交叉编译出 linux-x64 的测试二进制，
+# 再拷进 WSL 原生跑一遍。这样能抓到「只在 Linux 链接/运行期才暴露」的问题
+# （实测样例：platform.Backend 的 win32 成员会把 `extern "user32"` 拉进 Linux 链接，
+#  早先 `zig build check` 不链接所以没发现，换成真二进制直接报 undefined symbol）。
+$linuxBin = 'zig-out/bin/zzui-tests-linux'
+$null = wsl.exe -d Ubuntu -- true 2>$null
+$hasWsl = ($LASTEXITCODE -eq 0)
+if ($hasWsl) {
+    Remove-Item $linuxBin -ErrorAction SilentlyContinue
+    & zig test src/tests.zig -target x86_64-linux-gnu -O ReleaseSafe --test-no-exec "-femit-bin=$linuxBin" 2>&1 | Out-Null
+    Check "linux:tests-built" (Test-Path $linuxBin) "binary=$linuxBin"
+    if (Test-Path $linuxBin) {
+        $wslRoot = '/mnt/' + $root.Substring(0, 1).ToLower() + $root.Substring(2).Replace('\', '/')
+        $out = wsl.exe -d Ubuntu -- bash -lc "cp '$wslRoot/$linuxBin' /tmp/zzui-tests && chmod +x /tmp/zzui-tests && /tmp/zzui-tests 2>&1 | tail -1" 2>&1 | Out-String
+        Check "linux:tests-pass" ($out -match 'All \d+ tests passed') ($out.Trim())
+    }
+} else {
+    Skip "linux" "no WSL distro (wsl -d Ubuntu)"
+}
+
 Write-Host "== 2. continuity =="
 $tpl = 'tools/continuity/templates/用户级指令.instructions.md'
 $inst = 'tools/continuity/install-global-instruction.ps1'

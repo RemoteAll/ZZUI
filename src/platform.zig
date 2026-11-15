@@ -11,7 +11,13 @@ const std = @import("std");
 const builtin = @import("builtin");
 const t = @import("types.zig");
 const core = @import("core.zig");
-const win32_backend = @import("platform/win32.zig");
+// 非 Windows 目标用占位后端：`Backend` 联合体的每个成员都会被代码生成（惰性分析对
+// 被引用类型不做「只分析用到的分支」），真 Win32 后端里那堆 `extern "user32"` 在 linux/macos
+// 链接时会变成 undefined symbol。占位文件只实现同一组方法、全部返回「未实现」。
+const win32_backend = if (builtin.os.tag == .windows)
+    @import("platform/win32.zig")
+else
+    @import("platform/win32_stub.zig");
 const null_backend = @import("platform/null.zig");
 
 pub const Platform = enum { win32, null_backend };
