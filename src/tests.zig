@@ -1662,3 +1662,46 @@ test "textarea drag selects across lines and typing replaces the range" {
     ui.paint();
     try std.testing.expectEqualStrings("Z", buf[0..len]);
 }
+
+test "search supports select all, copy and replace" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "zig";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = seed.len;
+    var store = ClipStore{};
+    const cb = store.clip();
+    const opts = textedit.SearchOpts{ .width = 240, .clipboard = &cb };
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize, o: textedit.SearchOpts) void {
+            u.begin(400, 100);
+            _ = textedit.search(u, "sea", b, l, c, o);
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret, opts);
+    // search 也是「按下定位」，点正文区域拿焦点（避开右边的清除按钮）
+    ui.input = .{ .mouse = .{ .x = 60, .y = 10 }, .pressed = true, .down = true, .click = .{ .x = 60, .y = 10 } };
+    draw(&ui, &buf, &len, &caret, opts);
+
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.A);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqual(@as(usize, seed.len), caret);
+
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.C);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings(seed, store.buf[0..store.len]);
+
+    ui.input = .{};
+    ui.input.addCharBytes("q");
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings("q", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 1), caret);
+}

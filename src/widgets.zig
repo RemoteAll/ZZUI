@@ -336,6 +336,109 @@ fn clipboardHotkey(ui: *core.Context) bool {
     return ui.input.keyPressed(.C) or ui.input.keyPressed(.X) or ui.input.keyPressed(.V);
 }
 
+/// 单行文本的「选区感知」按键处理（`input` / `textedit.search` 共用）：
+/// Ctrl+A 全选、Ctrl+C/X/V（`clipboard` 非 null 时）、退格 / Delete 先吃选区、
+/// Shift+方向键扩选、普通方向键塌缩到选区边界、字符插入先替换选区。
+/// `st` 由调用方从 `ui.editState(pid)` 取（锚点与连击计数都在里面）。返回是否改了内容。
+pub fn editKeysSel(
+    ui: *core.Context,
+    st: *core.EditState,
+    buf: []u8,
+    len: *usize,
+    caret: *usize,
+    clipboard: ?*const core.Clipboard,
+) bool {
+    var changed = false;
+    const shift = ui.input.mods.shift;
+    const ctrl = ui.input.mods.ctrl;
+    const a0 = @min(st.anchor, caret.*);
+    const b0 = @max(st.anchor, caret.*);
+    const has_sel = b0 > a0;
+
+    if (ctrl and ui.input.keyPressed(.A)) {
+        st.anchor = 0;
+        caret.* = len.*;
+    } else if (ctrl and clipboard != null and clipboardHotkey(ui)) {
+        const cb = clipboard.?;
+        if (ui.input.keyPressed(.C)) {
+            if (has_sel) {
+                if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+            }
+        } else if (ui.input.keyPressed(.X)) {
+            if (has_sel) {
+                if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+                removeRange(buf, len, a0, b0);
+                caret.* = a0;
+                st.anchor = a0;
+                changed = true;
+            }
+        } else if (cb.get) |get| {
+            var tmp: [1024]u8 = undefined;
+            const n = get(cb.ctx, tmp[0..]);
+            if (n > 0 and n <= tmp.len and len.* - (b0 - a0) + n <= buf.len) {
+                removeRange(buf, len, a0, b0);
+                if (insertBytes(buf, len, a0, tmp[0..n])) {
+                    caret.* = a0 + n;
+                    st.anchor = caret.*;
+                    changed = true;
+                }
+            }
+        }
+    } else {
+        // 有选区时退格 / Delete 只吃选区（不额外删一个字符）
+        if (has_sel and (ui.input.keyPressed(.backspace) or ui.input.keyPressed(.delete))) {
+            removeRange(buf, len, a0, b0);
+            caret.* = a0;
+            changed = true;
+        } else if (!has_sel) {
+            if (ui.input.keyPressed(.backspace) and caret.* > 0) {
+                const prev = prevCharStart(buf[0..len.*], caret.*);
+                removeRange(buf, len, prev, caret.*);
+                caret.* = prev;
+                changed = true;
+            }
+            if (ui.input.keyPressed(.delete) and caret.* < len.*) {
+                const end = nextCharEnd(buf[0..len.*], caret.*);
+                removeRange(buf, len, caret.*, end);
+                changed = true;
+            }
+        }
+        // 方向键 / Home / End：Shift = 只挪插入符（扩选），否则塌缩到选区边界
+        if (ui.input.keyPressed(.left)) {
+            caret.* = if (has_sel and !shift) a0 else prevCharStart(buf[0..len.*], caret.*);
+        } else if (ui.input.keyPressed(.right)) {
+            if (has_sel and !shift) {
+                caret.* = b0;
+            } else if (caret.* < len.*) {
+                // nextCharEnd 会读 s[i]：必须自己守上界（光标在末尾时右移就是不动）
+                caret.* = nextCharEnd(buf[0..len.*], caret.*);
+            }
+        } else if (ui.input.keyPressed(.home)) {
+            caret.* = 0;
+        } else if (ui.input.keyPressed(.end)) {
+            caret.* = len.*;
+        }
+        // 输入字符：有选区先替换整段
+        const chars = ui.input.charsSlice();
+        if (chars.len > 0) {
+            if (has_sel) {
+                const s0 = @min(st.anchor, caret.*);
+                const s1 = @max(st.anchor, caret.*);
+                removeRange(buf, len, s0, s1);
+                caret.* = s0;
+                changed = true;
+            }
+            if (insertBytes(buf, len, caret.*, chars)) {
+                caret.* += chars.len;
+                changed = true;
+            }
+        }
+        // Shift 扩选时保留锚点；其余情况锚点跟着插入符走
+        if (!shift or changed) st.anchor = caret.*;
+    }
+    return changed;
+}
+
 /// 单行文本编辑按键（`input` / `textedit.search` 共用）：退格、Delete、左右、Home/End、字符插入。
 pub fn editKeys(ui: *core.Context, buf: []u8, len: *usize, caret: *usize, changed: *bool) void {
     if (ui.input.keyPressed(.backspace) and caret.* > 0 and caret.* <= len.*) {
@@ -425,93 +528,7 @@ pub fn input(
 
     // ---- 键盘（只给焦点控件）：先按选区语义处理，再算方向键
     if (it.focused) {
-        const shift = ui.input.mods.shift;
-        const ctrl = ui.input.mods.ctrl;
-        const a0 = @min(st.anchor, caret.*);
-        const b0 = @max(st.anchor, caret.*);
-        const has_sel = b0 > a0;
-
-        if (ctrl and ui.input.keyPressed(.A)) {
-            st.anchor = 0;
-            caret.* = len.*;
-        } else if (ctrl and opts.clipboard != null and clipboardHotkey(ui)) {
-            const cb = opts.clipboard.?;
-            if (ui.input.keyPressed(.C)) {
-                if (has_sel) {
-                    if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
-                }
-            } else if (ui.input.keyPressed(.X)) {
-                if (has_sel) {
-                    if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
-                    removeRange(buf, len, a0, b0);
-                    caret.* = a0;
-                    st.anchor = a0;
-                    changed = true;
-                }
-            } else if (cb.get) |get| {
-                var tmp: [1024]u8 = undefined;
-                const n = get(cb.ctx, tmp[0..]);
-                if (n > 0 and n <= tmp.len and len.* - (b0 - a0) + n <= buf.len) {
-                    removeRange(buf, len, a0, b0);
-                    if (insertBytes(buf, len, a0, tmp[0..n])) {
-                        caret.* = a0 + n;
-                        st.anchor = caret.*;
-                        changed = true;
-                    }
-                }
-            }
-        } else {
-            // 有选区时退格 / Delete 只吃选区（不额外删一个字符）
-            if (has_sel and (ui.input.keyPressed(.backspace) or ui.input.keyPressed(.delete))) {
-                removeRange(buf, len, a0, b0);
-                caret.* = a0;
-                changed = true;
-            } else if (!has_sel) {
-                if (ui.input.keyPressed(.backspace) and caret.* > 0) {
-                    const prev = prevCharStart(buf[0..len.*], caret.*);
-                    removeRange(buf, len, prev, caret.*);
-                    caret.* = prev;
-                    changed = true;
-                }
-                if (ui.input.keyPressed(.delete) and caret.* < len.*) {
-                    const end = nextCharEnd(buf[0..len.*], caret.*);
-                    removeRange(buf, len, caret.*, end);
-                    changed = true;
-                }
-            }
-            // 方向键 / Home / End：Shift = 只挪插入符（扩选），否则塌缩到选区边界
-            if (ui.input.keyPressed(.left)) {
-                caret.* = if (has_sel and !shift) a0 else prevCharStart(buf[0..len.*], caret.*);
-            } else if (ui.input.keyPressed(.right)) {
-                if (has_sel and !shift) {
-                    caret.* = b0;
-                } else if (caret.* < len.*) {
-                    // nextCharEnd 会读 s[i]：必须自己守上界（光标在末尾时右移就是不动）
-                    caret.* = nextCharEnd(buf[0..len.*], caret.*);
-                }
-            } else if (ui.input.keyPressed(.home)) {
-                caret.* = 0;
-            } else if (ui.input.keyPressed(.end)) {
-                caret.* = len.*;
-            }
-            // 输入字符：有选区先替换整段
-            const chars = ui.input.charsSlice();
-            if (chars.len > 0) {
-                if (has_sel) {
-                    const s0 = @min(st.anchor, caret.*);
-                    const s1 = @max(st.anchor, caret.*);
-                    removeRange(buf, len, s0, s1);
-                    caret.* = s0;
-                    changed = true;
-                }
-                if (insertBytes(buf, len, caret.*, chars)) {
-                    caret.* += chars.len;
-                    changed = true;
-                }
-            }
-            // Shift 扩选时保留锚点；其余情况锚点跟着插入符走
-            if (!shift or changed) st.anchor = caret.*;
-        }
+        if (editKeysSel(ui, st, buf, len, caret, opts.clipboard)) changed = true;
     }
 
     const border = if (it.focused) theme.accent else theme.border;

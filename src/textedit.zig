@@ -438,6 +438,8 @@ fn wrapSegment(
 pub const SearchOpts = struct {
     width: f32 = 260,
     placeholder: []const u8 = "Search",
+    /// 剪贴板（Ctrl+C/X/V）。null = 不碰剪贴板，其余编辑行为不变。
+    clipboard: ?*const core.Clipboard = null,
 };
 
 pub const SearchResult = struct {
@@ -458,24 +460,51 @@ pub fn search(
 ) SearchResult {
     const h: f32 = 34;
     const rect = ui.reserve(opts.width, h, opts.width <= 0);
-    const it = ui.interactEx(sliceId(id, 0x5EA4C4), rect, true);
+    const pid = sliceId(id, 0x5EA4C4);
+    const it = ui.interactEx(pid, rect, true);
     const pad_x: f32 = 32;
     const right_pad: f32 = if (len.* > 0) 30 else 10;
 
     var changed = false;
+    if (len.* > buf.len) len.* = buf.len;
+    if (caret.* > len.*) caret.* = len.*;
+    // 选区状态与 `widgets.input` 同一套（按 id 的编辑状态池）
+    const st = ui.editState(pid);
+    if (st.anchor > len.*) st.anchor = len.*;
+
+    // 按下定位 + 连击（双击选词、三击全选），按住拖动扩选
+    if (it.pressed) {
+        caret.* = caretFromXAt(ui, buf[0..len.*], rect.x + pad_x, ui.input.mouse.x);
+        const now = ui.time;
+        st.clicks = if (st.clicks > 0 and now - st.last_click <= 0.42) st.clicks +| 1 else 1;
+        st.last_click = now;
+        if (st.clicks == 2) {
+            const w = widgets.wordRange(buf[0..len.*], caret.*);
+            st.anchor = w.start;
+            caret.* = w.end;
+        } else if (st.clicks >= 3) {
+            st.anchor = 0;
+            caret.* = len.*;
+            st.clicks = 0;
+        } else {
+            st.anchor = caret.*;
+        }
+    } else if (it.dragging) {
+        caret.* = caretFromXAt(ui, buf[0..len.*], rect.x + pad_x, ui.input.mouse.x);
+    }
+
     if (it.clicked) {
         const clr = t.Rect{ .x = rect.x + rect.w - 26, .y = rect.y + (h - 20) / 2, .w = 20, .h = 20 };
         if (len.* > 0 and clr.contains(ui.input.mouse.x, ui.input.mouse.y)) {
             len.* = 0;
             caret.* = 0;
+            st.anchor = 0;
             changed = true;
-        } else {
-            caret.* = caretFromXAt(ui, buf[0..len.*], rect.x + pad_x, ui.input.mouse.x);
         }
     }
 
     if (it.focused) {
-        widgets.editKeys(ui, buf, len, caret, &changed);
+        if (widgets.editKeysSel(ui, st, buf, len, caret, opts.clipboard)) changed = true;
     }
 
     const border = if (it.focused) theme.accent else theme.border;
@@ -489,6 +518,20 @@ pub fn search(
 
     const content = buf[0..len.*];
     const tx = rect.x + pad_x;
+
+    // 选区底色：压在文字下面（节点顺序即绘制顺序）
+    const sa = @min(st.anchor, caret.*);
+    const sb = @max(st.anchor, caret.*);
+    if (it.focused and sb > sa) {
+        const limit = rect.x + rect.w - right_pad;
+        const x0 = @min(tx + ui.measureText(buf[0..sa], theme.font_body).w, limit);
+        const x1 = @min(tx + ui.measureText(buf[0..sb], theme.font_body).w, limit);
+        if (x1 > x0) ui.addBox(
+            .{ .x = x0, .y = rect.y + 7, .w = x1 - x0, .h = h - 14 },
+            .{ .fill = theme.withAlpha(theme.accent, 64), .radius = 3 },
+        );
+    }
+
     const m = ui.measureText(content, theme.font_body);
     const ty = rect.y + (h - m.h) / 2;
     if (len.* == 0) {
