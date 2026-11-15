@@ -1,11 +1,13 @@
 //! 主题令牌（对应 CUI 的 theme tokens：中性表面、一个强调色、细边框）。
 //!
-//! **浅色 / 深色两套调色板 + 运行时切换**（对位 CUI 的 `cui_set_theme`；过渡动画不做）。
+//! **浅色 / 深色两套调色板 + 运行时切换 + 过渡动画**（对位 CUI 的 `cui_set_theme`：
+//! `setMode` 瞬切，`animateTo` / `step` 逐帧插值；插值走 **OKLCH 感知空间**，不会中途发灰）。
 //!
 //! **为什么令牌是 `var` 而不是 `const`**：131 个控件全都直接写 `theme.bg` 这类令牌，
 //! 改成 `theme.cur().bg` 要动几百处调用点（还容易漏）。用模块级 `var` 让调用点**零改动**
 //! 就能切主题；代价是令牌从编译期常量变成运行时加载（体积实测见 `docs/决策记录.md`）。
-//! 颜色**只在 `setMode` 里整体替换**，不会出现半套配色。
+//! 颜色**只在 `setMode` / 动画推进时整体替换**，不会出现半套配色。
+const std = @import("std");
 const t = @import("types.zig");
 
 pub const Mode = enum { light, dark };
@@ -167,15 +169,8 @@ fn currentPalette() Palette {
 
 /// 四通道插值（含 alpha）；`mix` 那道接口会把 alpha 固定成 255，过渡不能那么干。
 fn mixRgba(a: t.Color, b: t.Color, k: f32) t.Color {
-    const q = @min(@max(k, 0), 1);
-    const lerp = struct {
-        fn f(x: u8, y: u8, kk: f32) u8 {
-            const xf: f32 = @floatFromInt(x);
-            const yf: f32 = @floatFromInt(y);
-            return @intFromFloat(@round(xf + (yf - xf) * kk));
-        }
-    }.f;
-    return .{ .r = lerp(a.r, b.r, q), .g = lerp(a.g, b.g, q), .b = lerp(a.b, b.b, q), .a = lerp(a.a, b.a, q) };
+    // 走 OKLCH：深浅互切时中间帧不发灰（实测对比见 docs/决策记录.md）
+    return mixOklch(a, b, k);
 }
 
 fn applyMix(k: f32) void {
@@ -243,6 +238,92 @@ pub fn mix(a: t.Color, b: t.Color, k: f32) t.Color {
         .b = @intFromFloat(ab * (1 - q) + bb * q),
         .a = 255,
     };
+}
+
+// ------------------------------------------------------------------ OKLCH 感知色彩空间
+//
+// 对位 CUI 的 OKLCH 支持。用途有两个：
+// 1) `mixOklch` 做**感知均匀**的两色插值（红 → 蓝经过紫，而不是 sRGB 直线上的发灰褐）；
+// 2) 主题过渡用它，深浅互切时中间帧不发"脏"。
+// 精度：sRGB u8 往返误差 ≤ 1（标准矩阵 + sRGB 传输函数，越界只做裁剪，不做色域映射）。
+
+pub const Oklch = struct { l: f32 = 0, c: f32 = 0, h: f32 = 0, a: u8 = 255 };
+
+const tau: f32 = 6.2831855;
+
+fn srgbToLinear(v: u8) f32 {
+    const s = @as(f32, @floatFromInt(v)) / 255.0;
+    return if (s <= 0.04045) s / 12.92 else std.math.pow(f32, (s + 0.055) / 1.055, 2.4);
+}
+
+fn linearToSrgb(v: f32) u8 {
+    const q = @min(@max(v, 0), 1);
+    const s = if (q <= 0.0031308) q * 12.92 else 1.055 * std.math.pow(f32, q, 1.0 / 2.4) - 0.055;
+    return @intFromFloat(@round(@min(@max(s, 0), 1) * 255));
+}
+
+/// sRGB → OKLCH（`h` 归一到 0..1，与 `colorpicker` 的 HSV 口径一致）。
+pub fn toOklch(c: t.Color) Oklch {
+    const r = srgbToLinear(c.r);
+    const g = srgbToLinear(c.g);
+    const b = srgbToLinear(c.b);
+
+    const l0 = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    const m0 = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    const s0 = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+
+    const l_ = std.math.cbrt(l0);
+    const m_ = std.math.cbrt(m0);
+    const s_ = std.math.cbrt(s0);
+
+    const ok_l = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
+    const ok_a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_;
+    const ok_b = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_;
+
+    const chroma = @sqrt(ok_a * ok_a + ok_b * ok_b);
+    var hue = std.math.atan2(ok_b, ok_a) / tau;
+    if (hue < 0) hue += 1;
+    // 极小色度（灰阶）的色相没有意义，归一成 0，免得插值里出现随机色相
+    if (chroma < 0.0005) hue = 0;
+    return .{ .l = ok_l, .c = chroma, .h = hue, .a = c.a };
+}
+
+/// OKLCH → sRGB（越界通道裁剪到 0..255）。
+pub fn fromOklch(o: Oklch) t.Color {
+    const ang = o.h * tau;
+    const ok_a = o.c * @cos(ang);
+    const ok_b = o.c * @sin(ang);
+
+    const l_ = o.l + 0.3963377774 * ok_a + 0.2158037573 * ok_b;
+    const m_ = o.l - 0.1055613458 * ok_a - 0.0638541728 * ok_b;
+    const s_ = o.l - 0.0894841775 * ok_a - 1.2914855480 * ok_b;
+
+    const l0 = l_ * l_ * l_;
+    const m0 = m_ * m_ * m_;
+    const s0 = s_ * s_ * s_;
+
+    const r = 4.0767416621 * l0 - 3.3077115913 * m0 + 0.2309699292 * s0;
+    const g = -1.2684380046 * l0 + 2.6097574011 * m0 - 0.3413193965 * s0;
+    const b = -0.0041960863 * l0 - 0.7034186147 * m0 + 1.7076147010 * s0;
+
+    return .{ .r = linearToSrgb(r), .g = linearToSrgb(g), .b = linearToSrgb(b), .a = o.a };
+}
+
+/// 感知均匀混色：明度/彩度线性插值，色相走**最短弧**，alpha 线性。
+pub fn mixOklch(a: t.Color, b: t.Color, k: f32) t.Color {
+    const q = @min(@max(k, 0), 1);
+    const x = toOklch(a);
+    const y = toOklch(b);
+    var dh = y.h - x.h;
+    if (dh > 0.5) dh -= 1 else if (dh < -0.5) dh += 1;
+    const al: f32 = @floatFromInt(a.a);
+    const bl: f32 = @floatFromInt(b.a);
+    return fromOklch(.{
+        .l = x.l + (y.l - x.l) * q,
+        .c = x.c + (y.c - x.c) * q,
+        .h = @mod(x.h + dh * q, 1.0),
+        .a = @intFromFloat(@round(al + (bl - al) * q)),
+    });
 }
 
 /// 换强调色（accent / accent_active / accent_text / accent_bg 一起算）。

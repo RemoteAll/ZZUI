@@ -134,3 +134,52 @@ test "theme: setMode cancels a running transition" {
     theme.animateTo(.light, 0.2);
     try std.testing.expect(!theme.isAnimating());
 }
+
+test "theme: oklch round trips within one step per channel" {
+    const samples = [_]types.Color{
+        types.Color.hex(0xFFFFFF, 255),
+        types.Color.hex(0x000000, 255),
+        types.Color.hex(0xFF0000, 255),
+        types.Color.hex(0x2563EB, 255),
+        types.Color.hex(0x6B7280, 255),
+        types.Color.hex(0xF3F4F6, 255),
+        types.Color.hex(0x22C55E, 255),
+        .{ .r = 12, .g = 200, .b = 77, .a = 128 },
+    };
+    for (samples) |c| {
+        const back = theme.fromOklch(theme.toOklch(c));
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(c.r)), @as(f32, @floatFromInt(back.r)), 1.5);
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(c.g)), @as(f32, @floatFromInt(back.g)), 1.5);
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(c.b)), @as(f32, @floatFromInt(back.b)), 1.5);
+        try std.testing.expectEqual(c.a, back.a);
+    }
+}
+
+test "theme: oklch matches reference values and keeps chroma when mixing" {
+    const white = theme.toOklch(types.Color.hex(0xFFFFFF, 255));
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), white.l, 0.01);
+    try std.testing.expect(white.c < 0.01);
+
+    const black = theme.toOklch(types.Color.hex(0x000000, 255));
+    try std.testing.expect(black.l < 0.01);
+
+    // 红：#FF0000 → L≈0.628、C≈0.258、H≈29°（0.081）
+    const red = theme.toOklch(types.Color.hex(0xFF0000, 255));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.628), red.l, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.258), red.c, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.081), red.h, 0.02);
+
+    // 感知插值的中点仍然有彩度（红→蓝经紫），sRGB 直线会掉到灰褐
+    const mid = theme.mixOklch(types.Color.hex(0xFF0000, 255), types.Color.hex(0x0000FF, 255), 0.5);
+    const m = theme.toOklch(mid);
+    try std.testing.expect(m.c > 0.12);
+    try std.testing.expect(mid.b > 80);
+
+    // 两端点必须精确
+    const a = types.Color.hex(0x123456, 255);
+    const b = types.Color.hex(0xABCDEF, 255);
+    try std.testing.expectEqual(a, theme.mixOklch(a, b, 0));
+    const one = theme.mixOklch(a, b, 1);
+    try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(b.r)), @as(f32, @floatFromInt(one.r)), 1.5);
+    try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(b.g)), @as(f32, @floatFromInt(one.g)), 1.5);
+}

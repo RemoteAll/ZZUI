@@ -938,8 +938,8 @@ fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) vo
         zzui.extras.muted(ui, "icons: draw / iconButton / iconLabel (vector, no font data)");
         var ic_row = ui.row(.{ .gap = 6 });
         const demo_icons = [_]zzui.icons.Icon{
-            .search,  .settings, .user,  .bell,      .mail,      .calendar,
-            .trash,   .pencil,   .copy,  .star,      .folder,    .download,
+            .search, .settings, .user, .bell, .mail,   .calendar,
+            .trash,  .pencil,   .copy, .star, .folder, .download,
         };
         for (demo_icons, 0..) |ic, i| {
             var nb: [8]u8 = undefined;
