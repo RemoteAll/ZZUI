@@ -94,3 +94,43 @@ test "theme: setAccent derives active/text/bg tokens" {
     theme.setMode(.light);
     snap(theme.light);
 }
+
+test "theme: animated switch interpolates tokens and lands exactly on the target" {
+    theme.setMode(.light);
+    defer theme.setMode(.light);
+
+    theme.animateTo(.dark, 0.2);
+    try std.testing.expectEqual(theme.Mode.dark, theme.mode);
+    try std.testing.expect(theme.isAnimating());
+
+    // 走到一半：既不是浅底也不是深底（往深处去）
+    _ = theme.step(0.1);
+    try std.testing.expect(theme.isAnimating());
+    try std.testing.expect(theme.bg.r < theme.light.bg.r);
+    try std.testing.expect(theme.bg.r > theme.dark.bg.r);
+    // 文字色反过来：浅色主题是深字，深色主题是浅字，中点应该在两者之间
+    try std.testing.expect(theme.text.r > theme.light.text.r);
+    try std.testing.expect(theme.text.r < theme.dark.text.r);
+
+    // 再推进到底：逐个令牌与深色调色板一致
+    _ = theme.step(0.5);
+    try std.testing.expect(!theme.isAnimating());
+    inline for (@typeInfo(theme.Palette).@"struct".field_names) |name| {
+        try std.testing.expectEqual(@field(theme.dark, name), @field(theme, name));
+    }
+}
+
+test "theme: setMode cancels a running transition" {
+    theme.setMode(.light);
+    defer theme.setMode(.light);
+
+    theme.animateTo(.dark, 1.0);
+    _ = theme.step(0.1);
+    theme.setMode(.light);
+    try std.testing.expect(!theme.isAnimating());
+    try std.testing.expectEqual(theme.light.bg.r, theme.bg.r);
+
+    // 同一个目标重复调 animateTo 不应重开窗口
+    theme.animateTo(.light, 0.2);
+    try std.testing.expect(!theme.isAnimating());
+}

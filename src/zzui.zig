@@ -57,6 +57,7 @@ pub const devviews = @import("devviews.zig");
 pub const devtools = @import("devtools.zig");
 pub const devpanels = @import("devpanels.zig");
 pub const colorpicker = @import("colorpicker.zig");
+pub const icons = @import("icons.zig");
 pub const render = @import("render.zig");
 pub const platform = @import("platform.zig");
 pub const win32 = @import("win32.zig");
@@ -65,6 +66,8 @@ pub const bmpfile = @import("bmpfile.zig");
 pub const App = struct {
     backend: platform.Backend,
     ui: core.Context = .{},
+    /// 上一帧时间（只用来算 `dt`，给主题过渡等「按秒推进」的东西用）。
+    last_time: f64 = 0,
 
     pub const Desc = struct {
         title: []const u8,
@@ -104,7 +107,13 @@ pub const App = struct {
         if (!self.ui.need_frame and !self.ui.input.down) self.backend.idle(50);
         if (!self.backend.poll()) return false;
         const sz = self.backend.size();
-        self.ui.time = self.backend.now();
+        const now = self.backend.now();
+        // 首帧 / 时间回绕：dt 记 0，不把「开程序那一秒」当成一大步动画
+        const dt: f32 = @floatCast(if (self.last_time > 0 and now >= self.last_time) @min(now - self.last_time, 0.1) else 0);
+        self.last_time = now;
+        self.ui.time = now;
+        // 主题过渡：令牌是 `var`，这里逐帧混色；还在动就要求继续出帧（否则空闲节流会冻在中途）
+        if (theme.step(dt)) self.ui.requestFrame();
         self.ui.measure_ctx = @ptrCast(&self.backend);
         self.ui.measure_fn = measureThunk;
         self.ui.list_ctx = @ptrCast(&self.backend);

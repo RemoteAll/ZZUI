@@ -128,6 +128,7 @@ pub fn palette(m: Mode) Palette {
 }
 
 /// 切换（或显式设置）主题：**整包替换**，不会出现半套配色。
+/// 若动画正在跑，`setMode` 会**立刻收尾**（跳到目标色），不做插值。
 pub fn setMode(m: Mode) void {
     const p = palette(m);
     // Zig 0.17 的反射：`field_names` 与 `field_types` 平行数组（0.14 的 `fields` 已移除）
@@ -135,11 +136,87 @@ pub fn setMode(m: Mode) void {
         @field(@This(), name) = @field(p, name);
     }
     mode = m;
+    anim_t = 1;
 }
 
 /// 浅 ↔ 深。
 pub fn toggle() void {
     setMode(if (mode == .light) .dark else .light);
+}
+
+// ------------------------------------------------------------------ 主题过渡动画
+//
+// 对位 CUI 的「主题切换过渡」：**逐帧把 22 个令牌从当前值混到目标调色板**。
+// 由 `App.next` 每帧调 `step(dt)`（令牌是 `var`，控件每帧现读，所以只要令牌变了画面就跟着变）。
+// 注意：`setAccent` 改的 accent 系列会被过渡覆盖回目标调色板的 accent —— 要保留自定义强调色时，
+// 过渡结束后再调一次 `setAccent`（文档里写明，不做隐式记忆）。
+
+var anim_from: Palette = light;
+var anim_to: Palette = light;
+var anim_t: f32 = 1;
+var anim_dur: f32 = 0.18;
+
+/// 当前 22 个令牌（拷出来当过渡起点）。
+fn currentPalette() Palette {
+    var p: Palette = light;
+    inline for (@typeInfo(Palette).@"struct".field_names) |name| {
+        @field(p, name) = @field(@This(), name);
+    }
+    return p;
+}
+
+/// 四通道插值（含 alpha）；`mix` 那道接口会把 alpha 固定成 255，过渡不能那么干。
+fn mixRgba(a: t.Color, b: t.Color, k: f32) t.Color {
+    const q = @min(@max(k, 0), 1);
+    const lerp = struct {
+        fn f(x: u8, y: u8, kk: f32) u8 {
+            const xf: f32 = @floatFromInt(x);
+            const yf: f32 = @floatFromInt(y);
+            return @intFromFloat(@round(xf + (yf - xf) * kk));
+        }
+    }.f;
+    return .{ .r = lerp(a.r, b.r, q), .g = lerp(a.g, b.g, q), .b = lerp(a.b, b.b, q), .a = lerp(a.a, b.a, q) };
+}
+
+fn applyMix(k: f32) void {
+    inline for (@typeInfo(Palette).@"struct".field_names) |name| {
+        @field(@This(), name) = mixRgba(@field(anim_from, name), @field(anim_to, name), k);
+    }
+}
+
+fn smooth(k: f32) f32 {
+    // smoothstep：两端慢、中间快，比线性更像原生切换
+    const q = @min(@max(k, 0), 1);
+    return q * q * (3 - 2 * q);
+}
+
+/// 带过渡地切到 `m`（`seconds <= 0` 用默认 0.18s）。主题模式**立刻**记成目标，颜色逐帧混过去。
+pub fn animateTo(m: Mode, seconds: f32) void {
+    if (m == mode and anim_t >= 1) return;
+    anim_from = currentPalette();
+    anim_to = palette(m);
+    mode = m;
+    anim_dur = if (seconds > 0) seconds else 0.18;
+    anim_t = 0;
+    applyMix(0);
+}
+
+/// 带过渡地浅 ↔ 深。
+pub fn toggleAnimated(seconds: f32) void {
+    animateTo(if (mode == .light) .dark else .light, seconds);
+}
+
+/// 推进过渡；返回是否还在动（调用方据此决定要不要继续出帧）。
+pub fn step(dt: f32) bool {
+    if (anim_t >= 1) return false;
+    anim_t = @min(1, anim_t + @max(dt, 0) / anim_dur);
+    applyMix(smooth(anim_t));
+    return anim_t < 1;
+}
+
+/// 是否正在过渡。
+pub fn isAnimating() bool {
+    return anim_t < 1;
 }
 
 pub fn isDark() bool {

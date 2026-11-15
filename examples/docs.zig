@@ -771,7 +771,7 @@ fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) vo
         if (st.ai_last_len > 0) zzui.extras.muted(ui, ui.frameStr(st.ai_last[0..st.ai_last_len]));
     } else if (st.page == 15) {
         zzui.extras.muted(ui, "Dev views: uptime bars, stacked event histogram (drag to select), coverage tree (fold / sort / activate) and a blame gutter with an age heat bar");
-        const up = zzui.devviews.uptime(ui, "docs-up", dv_services[0..], .{ .last_day = .{ .year = 2026, .month = 11, .day = 11 } });
+        const up = zzui.devviews.uptime(ui, "docs-up", dv_services[0..2], .{ .last_day = .{ .year = 2026, .month = 11, .day = 11 } });
         if (up.service >= 0) {
             var nb: [48]u8 = undefined;
             const msg = std.fmt.bufPrint(nb[0..], "uptime: {s} day {d}", .{ dv_services[@intCast(up.service)].name, up.day }) catch "uptime";
@@ -779,7 +779,7 @@ fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) vo
             st.dv_last_len = msg.len;
         }
         zzui.widgets.separator(ui);
-        const hres = zzui.devviews.timeHistogram(ui, "docs-hist", 1_700_006_400, 3600, dv_buckets, dv_series[0..], &st.dv_sel0, &st.dv_sel1, .{ .height = 150 });
+        const hres = zzui.devviews.timeHistogram(ui, "docs-hist", 1_700_006_400, 3600, 12, dv_series_12[0..], &st.dv_sel0, &st.dv_sel1, .{ .height = 150 });
         if (hres.selection_changed) {
             var nb: [56]u8 = undefined;
             const msg = std.fmt.bufPrint(nb[0..], "histogram: selected {d}..{d}", .{ @as(i64, @intFromFloat(st.dv_sel0)), @as(i64, @intFromFloat(st.dv_sel1)) }) catch "histogram";
@@ -787,16 +787,17 @@ fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) vo
             st.dv_last_len = msg.len;
         }
         zzui.widgets.separator(ui);
-        const cov = zzui.devviews.coverage(ui, "docs-cov", dv_cov_files[0..], &st.dv_cov, .{ .height = 240 });
+        const cov = zzui.devviews.coverage(ui, "docs-cov", dv_cov_files[0..], &st.dv_cov, .{ .height = 210 });
         if (cov.activated >= 0) {
             const n = @min(dv_cov_files[@intCast(cov.activated)].path.len, st.dv_last.len);
             @memcpy(st.dv_last[0..n], dv_cov_files[@intCast(cov.activated)].path[0..n]);
             st.dv_last_len = n;
         }
         zzui.widgets.separator(ui);
-        const bl = zzui.devviews.blame(ui, "docs-bl", dv_bl_lines[0..], dv_bl_map[0..], dv_bl_commits[0..], &st.dv_bl, .{
-            .height = 200,
-            .lang = "zig",
+        const bl = zzui.devviews.blame(ui, "docs-bl", dv_bl_lines[0..12], dv_bl_map[0..12], dv_bl_commits[0..], &st.dv_bl, .{
+            .height = 190,
+            // 不开逐行语法着色：一行最多会被切成 10 个文本节点，几个控件叠在一页就会顶穿 MAX_NODES
+            // （着色能力本身在编辑器页演示）
             .now = 1_702_000_000,
         });
         if (bl.clicked >= 0) {
@@ -932,7 +933,25 @@ fn build(ui: *zzui.core.Context, st: *State, cb: ?*const zzui.core.Clipboard) vo
         var pts: [wave.len]zzui.types.Point = undefined;
         for (wave, 0..) |p, i| pts[i] = .{ .x = lp.x + p.x, .y = lp.y + p.y };
         ui.addPolyline(pts[0..], false, 2, zzui.theme.accent);
-        for (wave) |p| ui.addCircle(.{ .x = lp.x + p.x, .y = lp.y + p.y }, 3, zzui.theme.accent_active);
+        // 点用 3×3 方块而不是圆：圆是 16 段浮层线，6 个就把浮层预算吃掉近百条
+        for (wave) |p| ui.addBox(.{ .x = lp.x + p.x - 2, .y = lp.y + p.y - 2, .w = 4, .h = 4 }, .{ .fill = zzui.theme.accent_active, .radius = 2 });
+        zzui.extras.muted(ui, "icons: draw / iconButton / iconLabel (vector, no font data)");
+        var ic_row = ui.row(.{ .gap = 6 });
+        const demo_icons = [_]zzui.icons.Icon{
+            .search,  .settings, .user,  .bell,      .mail,      .calendar,
+            .trash,   .pencil,   .copy,  .star,      .folder,    .download,
+        };
+        for (demo_icons, 0..) |ic, i| {
+            var nb: [8]u8 = undefined;
+            const bid = std.fmt.bufPrint(nb[0..], "ic{d}", .{i}) catch "ic";
+            if (zzui.icons.iconButton(ui, bid, ic, .{ .size = 26, .solid = i == 0 })) {
+                // 点第一个（实心）按钮演示**带过渡**的浅↔深切换
+                zzui.theme.toggleAnimated(0.22);
+            }
+        }
+        ic_row.end();
+        _ = zzui.icons.iconLabel(ui, "il-doc", .folder, "Documents");
+        zzui.extras.muted(ui, if (zzui.theme.isAnimating()) "theme transition running…" else "theme settled");
         col2.end();
         row.end();
     } else {
@@ -1057,6 +1076,13 @@ const dv_series = [_]zzui.devviews.HistogramSeries{
     .{ .name = "error", .counts = dv_errors[0..], .tone = .danger },
     .{ .name = "warn", .counts = dv_warns[0..], .tone = .warn },
     .{ .name = "info", .counts = dv_infos[0..], .tone = .info },
+};
+
+/// 演示页只用 12 个桶：每桶 3 个系列条 + 刻度都是**节点**，24 桶会把 `MAX_NODES` 顶穿。
+const dv_series_12 = [_]zzui.devviews.HistogramSeries{
+    .{ .name = "error", .counts = dv_errors[0..12], .tone = .danger },
+    .{ .name = "warn", .counts = dv_warns[0..12], .tone = .warn },
+    .{ .name = "info", .counts = dv_infos[0..12], .tone = .info },
 };
 
 const dv_cov_files = [_]zzui.devviews.CoverageFile{
@@ -1198,6 +1224,8 @@ fn runShot(page: usize) i32 {
     }
     var buf: [64]u8 = @splat(0);
     const name = shotName(buf[0..], page);
+    // 溢出就明确失败（返回 8）：容量池满了会**静默少画**，截图看着"差不多"，其实丢了内容
+    if (app.ui.overflowed) return 8;
     app.saveSurface(name) catch return 7;
     return 0;
 }
