@@ -148,6 +148,22 @@ const SizeState = struct {
 /// 单行输入框的跨帧编辑状态槽数（`widgets.input` 用；一屏十几个输入框够用）。
 pub const MAX_EDIT_STATES = 16;
 
+/// 撤销栈深度与单条记录能容纳的字节数。
+/// 定长缓冲换零分配：**超过 `EDIT_UNDO_MAX` 的编辑不记账**（撤销时跳过，不扩容也不糊数据）。
+pub const EDIT_UNDO_DEPTH = 16;
+pub const EDIT_UNDO_MAX = 16;
+
+/// 一条撤销记录：谁（控件 id）+ 位置 + 被删掉的字节 + 插入的字节。
+/// 撤销 = 删掉 `inserted`、写回 `removed`；应用前会逐字节比对，对不上就丢弃（缓冲被外部改过）。
+pub const UndoRec = struct {
+    id: u64 = 0,
+    pos: u32 = 0,
+    rlen: u8 = 0,
+    ilen: u8 = 0,
+    removed: [EDIT_UNDO_MAX]u8 = @splat(0),
+    inserted: [EDIT_UNDO_MAX]u8 = @splat(0),
+};
+
 /// 单行输入框的跨帧状态：选区锚点 + 连击计数。
 /// 不放调用方是因为 `input()` 的签名里只有 `caret`，加 `*State` 要改掉全部调用点；
 /// 而「锚点 / 连击」本来就是控件自己的交互状态，与 `scrolls` / `tips` 同类。
@@ -390,6 +406,9 @@ pub const Context = struct {
     /// 单行输入框的编辑状态（选区锚点 / 连击），跨帧保留、有界、LRU。
     edits: [MAX_EDIT_STATES]EditState = @splat(.{}),
     edit_n: usize = 0,
+    /// 文本编辑撤销栈（**全局一条**：同一时刻只有一个控件在编辑），满了丢最旧的。
+    undo: [EDIT_UNDO_DEPTH]UndoRec = @splat(.{}),
+    undo_n: usize = 0,
     /// 动画轨道（`anim.zig`），跨帧保留、有界。
     tracks: [MAX_TRACKS]AnimTrack = @splat(.{}),
     track_n: usize = 0,
@@ -998,6 +1017,70 @@ pub const Context = struct {
         }
         self.edits[oldest] = .{ .id = key, .used = self.time };
         return &self.edits[oldest];
+    }
+
+    /// 记一条撤销记录（在**改缓冲之前**调）。超过 `EDIT_UNDO_MAX` 的编辑直接不记。
+    /// `noinline` 是防患：调用点分散在多个控件里，万一将来被内联展开就是好几份体积
+    /// （当前实测加不加体积无差异）。
+    pub noinline fn pushUndo(self: *Context, id: u64, pos: usize, removed: []const u8, inserted: []const u8) void {
+        if (removed.len > EDIT_UNDO_MAX or inserted.len > EDIT_UNDO_MAX) return;
+        const rec = UndoRec{
+            .id = id,
+            .pos = @intCast(pos),
+            .rlen = @intCast(removed.len),
+            .ilen = @intCast(inserted.len),
+            .removed = blk: {
+                var a: [EDIT_UNDO_MAX]u8 = @splat(0);
+                @memcpy(a[0..removed.len], removed);
+                break :blk a;
+            },
+            .inserted = blk: {
+                var a: [EDIT_UNDO_MAX]u8 = @splat(0);
+                @memcpy(a[0..inserted.len], inserted);
+                break :blk a;
+            },
+        };
+        if (self.undo_n < self.undo.len) {
+            self.undo[self.undo_n] = rec;
+            self.undo_n += 1;
+            return;
+        }
+        var i: usize = 1;
+        while (i < self.undo.len) : (i += 1) self.undo[i - 1] = self.undo[i];
+        self.undo[self.undo.len - 1] = rec;
+    }
+
+    /// 撤销栈顶（仅当它属于 `id`）：把 `buf` 改回去。返回是否真的撤销了。
+    /// 栈顶属于别的控件时**不弹**（那个控件的编辑还没被撤）。
+    pub noinline fn undoLast(self: *Context, id: u64, buf: []u8, len: *usize, caret: *usize) bool {
+        if (self.undo_n == 0) return false;
+        const rec = self.undo[self.undo_n - 1];
+        if (rec.id != id) return false;
+        const pos: usize = rec.pos;
+        const ilen: usize = rec.ilen;
+        const rlen: usize = rec.rlen;
+        // 内容对不上（外部改过缓冲）就丢弃这条，不能瞎改
+        if (pos + ilen > len.* or !std.mem.eql(u8, buf[pos .. pos + ilen], rec.inserted[0..ilen])) {
+            self.undo_n -= 1;
+            return false;
+        }
+        if (len.* + rlen > buf.len) {
+            self.undo_n -= 1;
+            return false;
+        }
+        // 先删掉当时插入的，再把当时删掉的写回去
+        var k = pos + ilen;
+        const n = len.* - (pos + ilen);
+        var j: usize = 0;
+        while (j < n) : (j += 1) buf[pos + j] = buf[pos + ilen + j];
+        len.* -= ilen;
+        k = len.*;
+        while (k > pos) : (k -= 1) buf[k + rlen - 1] = buf[k - 1];
+        @memcpy(buf[pos .. pos + rlen], rec.removed[0..rlen]);
+        len.* += rlen;
+        self.undo_n -= 1;
+        caret.* = pos + rlen;
+        return true;
     }
 
     /// 绝对定位面板：节点矩形就是 rect，内部内容从 rect + pad 开始；不推进父容器游标。

@@ -153,7 +153,12 @@ pub fn textarea(
         const b0 = @max(st.anchor, caret.*);
         const has_sel = b0 > a0;
 
-        if (ctrl and ui.input.keyPressed(.A)) {
+        if (ctrl and ui.input.keyPressed(.Z)) {
+            if (ui.undoLast(st.id, buf, len, caret)) {
+                st.anchor = caret.*;
+                changed = true;
+            }
+        } else if (ctrl and ui.input.keyPressed(.A)) {
             st.anchor = 0;
             caret.* = len.*;
         } else if (ctrl and opts.clipboard != null and
@@ -167,6 +172,7 @@ pub fn textarea(
             } else if (ui.input.keyPressed(.X)) {
                 if (has_sel) {
                     if (cb.set) |set| set(cb.ctx, buf[a0..b0]);
+                    ui.pushUndo(st.id, a0, buf[a0..b0], "");
                     removeRange(buf, len, a0, b0);
                     caret.* = a0;
                     changed = true;
@@ -175,6 +181,7 @@ pub fn textarea(
                 var tmp: [1024]u8 = undefined;
                 const cn = get(cb.ctx, tmp[0..]);
                 if (cn > 0 and cn <= tmp.len and len.* - (b0 - a0) + cn <= buf.len) {
+                    ui.pushUndo(st.id, a0, buf[a0..b0], tmp[0..cn]);
                     removeRange(buf, len, a0, b0);
                     insertBytes(buf, len, a0, tmp[0..cn]);
                     caret.* = a0 + cn;
@@ -183,18 +190,22 @@ pub fn textarea(
             }
         } else {
             if (has_sel and (ui.input.keyPressed(.backspace) or ui.input.keyPressed(.delete))) {
+                ui.pushUndo(st.id, a0, buf[a0..b0], "");
                 removeRange(buf, len, a0, b0);
                 caret.* = a0;
                 changed = true;
             } else if (!has_sel) {
                 if (ui.input.keyPressed(.backspace) and caret.* > 0) {
                     const prev = prevCharStart(buf[0..len.*], caret.*);
+                    ui.pushUndo(st.id, prev, buf[prev..caret.*], "");
                     removeRange(buf, len, prev, caret.*);
                     caret.* = prev;
                     changed = true;
                 }
                 if (ui.input.keyPressed(.delete) and caret.* < len.*) {
-                    removeRange(buf, len, caret.*, utf8Step(buf[0..len.*], caret.*));
+                    const end = utf8Step(buf[0..len.*], caret.*);
+                    ui.pushUndo(st.id, caret.*, buf[caret.*..end], "");
+                    removeRange(buf, len, caret.*, end);
                     changed = true;
                 }
             }
@@ -227,8 +238,11 @@ pub fn textarea(
                 if (has_sel) {
                     const s0 = @min(st.anchor, caret.*);
                     const s1 = @max(st.anchor, caret.*);
+                    ui.pushUndo(st.id, s0, buf[s0..s1], "\n");
                     removeRange(buf, len, s0, s1);
                     caret.* = s0;
+                } else {
+                    ui.pushUndo(st.id, caret.*, "", "\n");
                 }
                 insertBytes(buf, len, caret.*, "\n");
                 caret.* += 1;
@@ -239,9 +253,12 @@ pub fn textarea(
                 if (has_sel) {
                     const s0 = @min(st.anchor, caret.*);
                     const s1 = @max(st.anchor, caret.*);
+                    ui.pushUndo(st.id, s0, buf[s0..s1], chars);
                     removeRange(buf, len, s0, s1);
                     caret.* = s0;
                     changed = true;
+                } else {
+                    ui.pushUndo(st.id, caret.*, "", chars);
                 }
                 var ci: usize = 0;
                 while (ci < chars.len) {

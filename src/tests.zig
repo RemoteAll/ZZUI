@@ -1705,3 +1705,83 @@ test "search supports select all, copy and replace" {
     try std.testing.expectEqualStrings("q", buf[0..len]);
     try std.testing.expectEqual(@as(usize, 1), caret);
 }
+
+test "input undoes the last edit with ctrl+z" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    var len: usize = 0;
+    var caret: usize = 0;
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize) void {
+            u.begin(300, 200);
+            var col = u.column(.{ .pad = 0, .gap = 0 });
+            _ = widgets.input(u, "undo", b, l, c, .{});
+            col.end();
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret);
+    // 点一下拿焦点
+    ui.input = .{ .mouse = .{ .x = 2, .y = 10 }, .pressed = true, .down = true, .click = .{ .x = 2, .y = 10 } };
+    draw(&ui, &buf, &len, &caret);
+
+    // 输入 "ab"（一次事件两个字符 → 一条记录）
+    ui.input = .{};
+    ui.input.addCharBytes("ab");
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqualStrings("ab", buf[0..len]);
+
+    // Ctrl+Z：整条记录回滚（两个字符）→ 光标回到 0（编辑前的位置）
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.Z);
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqual(@as(usize, 0), len);
+    try std.testing.expectEqual(@as(usize, 0), caret);
+
+    // 再 Ctrl+Z：栈已空，什么都不变
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.Z);
+    draw(&ui, &buf, &len, &caret);
+    try std.testing.expectEqual(@as(usize, 0), len);
+}
+
+test "textarea undoes a typed character and a deletion" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "hi";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+    const opts = textedit.TextareaOpts{ .rows = 2 };
+
+    const draw = struct {
+        fn f(u: *core.Context, b: []u8, l: *usize, c: *usize, o: textedit.TextareaOpts) void {
+            u.begin(400, 200);
+            _ = textedit.textarea(u, "taundo", b, l, c, o);
+            u.paint();
+        }
+    }.f;
+
+    draw(&ui, &buf, &len, &caret, opts);
+    ui.input = .{ .mouse = .{ .x = 100, .y = 12 }, .pressed = true, .down = true, .click = .{ .x = 100, .y = 12 } };
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqual(seed.len, caret);
+
+    // 退格删掉末尾的 "i"
+    ui.input = .{};
+    ui.input.addKey(.backspace);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings("h", buf[0..len]);
+
+    // Ctrl+Z 把它写回来
+    ui.input = .{};
+    ui.input.mods.ctrl = true;
+    ui.input.addKey(.Z);
+    draw(&ui, &buf, &len, &caret, opts);
+    try std.testing.expectEqualStrings("hi", buf[0..len]);
+    try std.testing.expectEqual(@as(usize, 2), caret);
+}
