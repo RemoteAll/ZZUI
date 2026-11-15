@@ -223,7 +223,8 @@ test "platform: x11 listDir enumerates a real directory (Linux only)" {
     try std.testing.expect(found_tmp);
 }
 
-test "platform: x11 clipboard round trips (Linux + a display only)" {    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+test "platform: x11 clipboard round trips (Linux + a display only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
     const x11 = @import("platform/x11.zig");
     // 没有 DISPLAY 就跳过（CI 里的 `zig build test` 就是这种情况）
     var b = x11.Backend.init("zzui-clip-test", 32, 32, false) catch return error.SkipZigTest;

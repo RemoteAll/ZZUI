@@ -192,7 +192,9 @@ pub fn textarea(
         var cx = inner_x + prefix_w;
         if (cx > rect.x + rect.w - opts.pad) cx = rect.x + rect.w - opts.pad;
         const cy = rect.y + opts.pad + opts.line_h * @as(f32, @floatFromInt(row_in_view));
-        ui.addOverlayLine(.{ .x = cx, .y = cy + 1 }, .{ .x = cx, .y = cy + opts.line_h - 3 }, 1.5, theme.text);
+        const bar = t.Rect{ .x = cx, .y = cy + 1, .w = 1.5, .h = opts.line_h - 4 };
+        ui.addOverlayLine(.{ .x = bar.x, .y = bar.y }, .{ .x = bar.x, .y = bar.y + bar.h }, 1.5, theme.text);
+        ui.noteCaret(bar);
     }
     return changed;
 }

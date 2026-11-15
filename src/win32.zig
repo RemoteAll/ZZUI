@@ -740,6 +740,31 @@ pub const WM_RBUTTONDOWN: UINT = 0x0204;
 pub const WM_RBUTTONUP: UINT = 0x0205;
 pub const WM_KEYDOWN: UINT = 0x0100;
 pub const WM_CHAR: UINT = 0x0102;
+
+// ---------------------------------------------------------------- IME（输入法）
+// 组成窗与候选窗的位置由 IMM32 管：不调 `ImmSetCompositionWindow` 时，中文输入法的
+// 候选框会贴在客户区左上角而不是光标处。只声明「挪位置」需要的四个函数。
+pub const HIMC = HANDLE;
+pub const CFS_POINT: DWORD = 0x0002;
+pub const CFS_EXCLUDE: DWORD = 0x0080;
+
+pub const COMPOSITIONFORM = extern struct {
+    dwStyle: DWORD,
+    ptCurrentPos: POINT,
+    rcArea: RECT,
+};
+
+pub const CANDIDATEFORM = extern struct {
+    dwIndex: DWORD,
+    dwStyle: DWORD,
+    ptCurrentPos: POINT,
+    rcArea: RECT,
+};
+
+pub extern "imm32" fn ImmGetContext(hWnd: HWND) callconv(.winapi) ?HIMC;
+pub extern "imm32" fn ImmReleaseContext(hWnd: HWND, hIMC: HIMC) callconv(.winapi) BOOL;
+pub extern "imm32" fn ImmSetCompositionWindow(hIMC: HIMC, lpCompForm: *const COMPOSITIONFORM) callconv(.winapi) BOOL;
+pub extern "imm32" fn ImmSetCandidateWindow(hIMC: HIMC, lpCandidate: *const CANDIDATEFORM) callconv(.winapi) BOOL;
 /// 文件拖放（需 `DragAcceptFiles(hwnd, TRUE)` 才会收到）。`wParam` 是 HDROP。
 pub const WM_DROPFILES: UINT = 0x0233;
 pub const VK_ESCAPE: UINT = 0x001B;

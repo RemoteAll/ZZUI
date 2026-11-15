@@ -77,4 +77,6 @@ pub const Backend = struct {
     }
 
     pub fn setClipboard(_: *Backend, _: []const u8) void {}
+
+    pub fn setImeCaret(_: *Backend, _: t.Rect) void {}
 };

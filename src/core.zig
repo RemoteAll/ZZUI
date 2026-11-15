@@ -375,6 +375,10 @@ pub const Context = struct {
     track_n: usize = 0,
     /// 本帧时间（秒），由 App 每帧写入。
     time: f64 = 0,
+    /// 本帧「文本插入符」矩形：`widgets.input` / `textedit` / `editor` 画光标时登记。
+    /// `App.end` 用它把 **IME 组成窗/候选窗** 挪到光标下面；`null` = 本帧没有文本光标。
+    /// 一帧只有一个真焦点，所以后来的覆盖先来的。
+    caret_rect: ?t.Rect = null,
     /// 界面文案表（`strings.zig`）：月名/星期名/「今天」。null = 英文。
     /// 只存指针（调用方持有表），每帧读取 —— 换语言就是一次调用。
     strings: ?*const @import("strings.zig").Strings = null,
@@ -411,6 +415,7 @@ pub const Context = struct {
         self.max_layer = 0;
         self.overflowed = false;
         self.need_frame = false;
+        self.caret_rect = null;
         self.clip = null;
         self.wheel_target = self.wheel_target_next;
         self.wheel_target_next = 0;
@@ -454,6 +459,12 @@ pub const Context = struct {
 
     pub fn measureText(self: *Context, s: []const u8, size: f32) t.Size {
         return self.measure_fn(self.measure_ctx, s, size, false);
+    }
+
+    /// 登记本帧文本插入符位置（IME 组成窗/候选窗要跟着它走）。
+    /// 文本控件在**自己画光标的地方**调一次即可；非文本控件的焦点不该登记。
+    pub fn noteCaret(self: *Context, rect: t.Rect) void {
+        self.caret_rect = rect;
     }
 
     /// 量文本（可指定粗体；粗体与常规的宽度不同，markdown 换行必须用同一档量）。

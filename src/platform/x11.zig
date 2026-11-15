@@ -984,6 +984,9 @@ pub const Backend = struct {
         return 0;
     }
 
+    /// X11 侧没有接输入法（要走 XIM 才有组成串，属未完成项），插入符位置直接忽略。
+    pub fn setImeCaret(_: *Backend, _: t.Rect) void {}
+
     pub fn setClipboard(self: *Backend, text: []const u8) void {
         const n = @min(text.len, self.clip_text.len);
         @memcpy(self.clip_text[0..n], text[0..n]);
@@ -1072,7 +1075,8 @@ fn hexNibble(c: u8) ?u8 {
     };
 }
 
-fn mapKeysym(sym: c_ulong) ?t.Key {    return switch (sym) {
+fn mapKeysym(sym: c_ulong) ?t.Key {
+    return switch (sym) {
         0xff08 => .backspace,
         0xff09 => .tab,
         0xff0d, 0xff8d => .enter,

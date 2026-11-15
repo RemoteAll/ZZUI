@@ -89,6 +89,9 @@ pub const Backend = struct {
 
     pub fn setClipboard(_: *Backend, _: []const u8) void {}
 
+    /// 无窗口后端没有输入法（`--once` 出图 / 单测用它）。
+    pub fn setImeCaret(_: *Backend, _: t.Rect) void {}
+
     /// 无系统字体可用：按 0.55 em 估宽（粗体 0.58）、1.35 em 估高（与 core 的默认测量一致）。
     pub fn measure(_: *Backend, s: []const u8, size_px: f32, bold: bool) t.Size {
         const n: f32 = @floatFromInt(s.len);

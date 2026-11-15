@@ -152,6 +152,9 @@ pub const App = struct {
     /// 结束一帧：生成绘制指令、按层软件光栅 + 文本、呈现。
     pub fn end(self: *App) void {
         self.ui.paint();
+        // 输入法（IME）的组成窗/候选窗要跟着本帧的文本插入符走。
+        // 只在光标真的挪动时后端才真调 IMM32；不支持输入法的平台是空实现。
+        if (self.ui.caret_rect) |r| self.backend.setImeCaret(r);
         const sz = self.backend.size();
         const s = self.backend.scale();
         const wpx: u32 = @intFromFloat(@round(sz.w * s));

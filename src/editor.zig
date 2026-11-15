@@ -1196,7 +1196,9 @@ pub fn codeEditor(
     if (it.focused and sc.caret_line >= st.scroll_line and sc.caret_line < st.scroll_line + rows) {
         const cy = rect.y + pad * 0.5 + lh * @as(f32, @floatFromInt(sc.caret_line - st.scroll_line));
         const cx = body.x + pad + caret_x - st.scroll_x;
-        ui.addOverlayLine(.{ .x = cx, .y = cy + 1 }, .{ .x = cx, .y = cy + lh - 2 }, 1.5, theme.text);
+        const bar = t.Rect{ .x = cx, .y = cy + 1, .w = 1.5, .h = lh - 3 };
+        ui.addOverlayLine(.{ .x = bar.x, .y = bar.y }, .{ .x = bar.x, .y = bar.y + bar.h }, 1.5, theme.text);
+        ui.noteCaret(bar);
     }
     ui.clip = saved_clip;
 

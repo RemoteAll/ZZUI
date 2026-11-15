@@ -57,6 +57,9 @@ pub const Backend = struct {
     input: t.Input = .{},
     /// 字体缓存：(字号, 字重, 等宽) 组合。等宽与常规各占几档，16 足够且只影响栈上内存。
     fonts: [16]FontSlot = @splat(.{}),
+    /// 上一次上报给 IME 的插入符位置（整数像素）。IMM32 调用要锁一次输入上下文，
+    /// 每帧无脑调是白花销 —— 只有光标真的挪了才重设。null = 还没上报过。
+    ime_caret: ?w.POINT = null,
 
     pub fn init(title: []const u8, width: u32, height: u32, show: bool) !Backend {
         _ = w.SetProcessDPIAware();
@@ -111,6 +114,33 @@ pub const Backend = struct {
         self.hbmp = null;
         self.hdc_mem = null;
         self.hwnd = null;
+    }
+
+    /// 把 IME 的**组成窗**与**候选窗**挪到插入符下方（`App.end` 每帧传本帧的文本插入符矩形）。
+    /// 不调这两个函数时中文输入法的候选框会贴在客户区左上角。
+    /// 降级：没装输入法 / 拿不到 HIMC（`ImmGetContext` 返回 null）就静默跳过，不报错也不崩。
+    pub fn setImeCaret(self: *Backend, r: t.Rect) void {
+        const hwnd = self.hwnd orelse return;
+        const x: i32 = @intFromFloat(@round(r.x));
+        const y: i32 = @intFromFloat(@round(r.y + r.h));
+        const h: i32 = @intFromFloat(@max(r.h, 1));
+        if (self.ime_caret) |c| {
+            if (c.x == x and c.y == y) return;
+        }
+        self.ime_caret = .{ .x = x, .y = y };
+        const himc = w.ImmGetContext(hwnd) orelse return;
+        defer _ = w.ImmReleaseContext(hwnd, himc);
+        // 组成窗：以插入符左下角为锚点（CFS_POINT）
+        var cf: w.COMPOSITIONFORM = std.mem.zeroes(w.COMPOSITIONFORM);
+        cf.dwStyle = w.CFS_POINT;
+        cf.ptCurrentPos = .{ .x = x, .y = y };
+        _ = w.ImmSetCompositionWindow(himc, &cf);
+        // 候选窗：插入符所在的那一行当「排除区」，免得候选框盖住正在输入的文字
+        var cd: w.CANDIDATEFORM = std.mem.zeroes(w.CANDIDATEFORM);
+        cd.dwStyle = w.CFS_EXCLUDE;
+        cd.ptCurrentPos = .{ .x = x, .y = y };
+        cd.rcArea = .{ .left = x, .top = y - h, .right = x + 1, .bottom = y };
+        _ = w.ImmSetCandidateWindow(himc, &cd);
     }
 
     /// 列出目录：写入 `out[0..n)`（`name` 指向 `names` 缓冲），返回条目数或 -1。

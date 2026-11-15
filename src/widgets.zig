@@ -390,7 +390,10 @@ pub fn input(
         const cm = ui.measureText(buf[0..caret.*], theme.font_body);
         var cx = tx + cm.w;
         if (cx > rect.x + rect.w - pad_x) cx = rect.x + rect.w - pad_x;
-        ui.addOverlayLine(.{ .x = cx, .y = rect.y + 8 }, .{ .x = cx, .y = rect.y + rect.h - 8 }, 1.5, theme.text);
+        const bar = t.Rect{ .x = cx, .y = rect.y + 8, .w = 1.5, .h = rect.h - 16 };
+        ui.addOverlayLine(.{ .x = bar.x, .y = bar.y }, .{ .x = bar.x, .y = bar.y + bar.h }, 1.5, theme.text);
+        // 输入法的组成窗/候选窗要跟着光标（Windows 上靠这个位置才不跑到左上角）
+        ui.noteCaret(bar);
     }
     return changed;
 }

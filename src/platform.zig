@@ -32,7 +32,7 @@ const backend_methods = [_][]const u8{
     "deinit",       "poll",         "size",        "scale",
     "now",          "pixels",       "present",     "drawTextLayer",
     "saveSurface",  "measure",      "droppedFile", "idle",
-    "getClipboard", "setClipboard",
+    "getClipboard", "setClipboard", "setImeCaret",
 };
 
 fn assertBackendContract(comptime T: type) void {
@@ -201,6 +201,16 @@ pub const Backend = union(enum) {
             .win32 => |*b| b.setClipboard(text),
             .x11 => |*b| b.setClipboard(text),
             .null_backend => |*b| b.setClipboard(text),
+        }
+    }
+
+    /// 把输入法的组成窗/候选窗挪到文本插入符下方（`App.end` 每帧传本帧插入符矩形）。
+    /// 不支持的平台是空实现（X11 没接 XIM、null 没有窗口）。
+    pub fn setImeCaret(self: *Backend, rect: t.Rect) void {
+        switch (self.*) {
+            .win32 => |*b| b.setImeCaret(rect),
+            .x11 => |*b| b.setImeCaret(rect),
+            .null_backend => |*b| b.setImeCaret(rect),
         }
     }
 };

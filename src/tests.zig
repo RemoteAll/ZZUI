@@ -1317,3 +1317,52 @@ test "status bar lays out both sides and reports clicks" {
     try std.testing.expect(pick.?.right);
     try std.testing.expectEqual(@as(usize, 1), pick.?.index);
 }
+
+test "input registers its caret rect so the IME window can follow it" {
+    var ui = core.Context{};
+    var buf: [32]u8 = @splat(0);
+    var len: usize = 0;
+    var caret: usize = 0;
+
+    // 没聚焦：不该有插入符（否则输入法会跑到上一个光标的位置）
+    ui.begin(300, 200);
+    var c1 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "ime", &buf, &len, &caret, .{});
+    c1.end();
+    ui.paint();
+    try std.testing.expect(ui.caret_rect == null);
+
+    // 点一下拿到焦点，下一帧才登记插入符
+    ui.input = .{ .mouse = .{ .x = 20, .y = 10 }, .click = .{ .x = 20, .y = 10 } };
+    ui.begin(300, 200);
+    var c2 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "ime", &buf, &len, &caret, .{});
+    c2.end();
+    ui.paint();
+
+    ui.input = .{};
+    ui.begin(300, 200);
+    var c3 = ui.column(.{ .pad = 0, .gap = 0 });
+    _ = widgets.input(&ui, "ime", &buf, &len, &caret, .{});
+    c3.end();
+    ui.paint();
+    const r = ui.caret_rect orelse return error.TestUnexpectedResult;
+    try std.testing.expect(r.w > 0 and r.h > 0);
+    // 插入符必须落在文本框里面（候选窗贴着它才不会跑到窗口角落）
+    const field = ui.lastRect(core.Context.idOf("ime") ^ 0x7FEB352D) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(r.y >= field.y and r.y + r.h <= field.y + field.h);
+    try std.testing.expect(r.x >= field.x and r.x <= field.x + field.w);
+}
+
+test "caret rect is reset every frame and the last writer wins" {
+    var ui = core.Context{};
+    ui.caret_rect = .{ .x = 5, .y = 6, .w = 1, .h = 10 };
+    ui.begin(100, 100);
+    try std.testing.expect(ui.caret_rect == null);
+
+    ui.noteCaret(.{ .x = 1, .y = 2, .w = 1, .h = 10 });
+    ui.noteCaret(.{ .x = 30, .y = 40, .w = 1, .h = 12 });
+    try std.testing.expectEqual(@as(f32, 30), ui.caret_rect.?.x);
+    try std.testing.expectEqual(@as(f32, 40), ui.caret_rect.?.y);
+}
+
