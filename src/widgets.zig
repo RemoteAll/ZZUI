@@ -483,7 +483,12 @@ pub fn input(
             if (ui.input.keyPressed(.left)) {
                 caret.* = if (has_sel and !shift) a0 else prevCharStart(buf[0..len.*], caret.*);
             } else if (ui.input.keyPressed(.right)) {
-                caret.* = if (has_sel and !shift) b0 else nextCharEnd(buf[0..len.*], caret.*);
+                if (has_sel and !shift) {
+                    caret.* = b0;
+                } else if (caret.* < len.*) {
+                    // nextCharEnd 会读 s[i]：必须自己守上界（光标在末尾时右移就是不动）
+                    caret.* = nextCharEnd(buf[0..len.*], caret.*);
+                }
             } else if (ui.input.keyPressed(.home)) {
                 caret.* = 0;
             } else if (ui.input.keyPressed(.end)) {

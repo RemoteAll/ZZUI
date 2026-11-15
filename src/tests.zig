@@ -721,8 +721,8 @@ test "textarea inserts characters and newlines" {
     const mx = r.x + 12;
     const my = r.y + 12;
 
-    // 点击取得焦点
-    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .click = .{ .x = mx, .y = my } };
+    // 点击取得焦点（textarea 现在是「按下定位」，所以必须带 pressed/down）
+    ui.input = .{ .mouse = .{ .x = mx, .y = my }, .pressed = true, .down = true, .click = .{ .x = mx, .y = my } };
     ui.begin(400, 200);
     _ = textedit.textarea(&ui, "ta", buf[0..], &len, &caret, opts);
     ui.paint();
@@ -761,7 +761,7 @@ test "textarea backspace removes the newline across lines" {
     const id = core.Context.idOf("tb") ^ 0x7A47E;
     const r = ui.lastRect(id) orelse return error.NoHit;
 
-    ui.input = .{ .mouse = .{ .x = r.x + 12, .y = r.y + 12 }, .click = .{ .x = r.x + 12, .y = r.y + 12 } };
+    ui.input = .{ .mouse = .{ .x = r.x + 12, .y = r.y + 12 }, .pressed = true, .down = true, .click = .{ .x = r.x + 12, .y = r.y + 12 } };
     ui.begin(400, 200);
     _ = textedit.textarea(&ui, "tb", buf[0..], &len, &caret, opts);
     ui.paint();
@@ -1558,7 +1558,7 @@ test "textarea shift+right extends the selection and backspace deletes it" {
 
     draw(&ui, &buf, &len, &caret, opts);
     // 点一下拿焦点（同时也把锚点放到行首）
-    ui.input = .{ .mouse = .{ .x = 4, .y = 12 }, .click = .{ .x = 4, .y = 12 } };
+    ui.input = .{ .mouse = .{ .x = 4, .y = 12 }, .pressed = true, .down = true, .click = .{ .x = 4, .y = 12 } };
     draw(&ui, &buf, &len, &caret, opts);
     try std.testing.expectEqual(@as(usize, 0), caret);
 
@@ -1600,7 +1600,7 @@ test "textarea ctrl+a selects all, copies it, and typing replaces it" {
     }.f;
 
     draw(&ui, &buf, &len, &caret, opts);
-    ui.input = .{ .mouse = .{ .x = 4, .y = 12 }, .click = .{ .x = 4, .y = 12 } };
+    ui.input = .{ .mouse = .{ .x = 4, .y = 12 }, .pressed = true, .down = true, .click = .{ .x = 4, .y = 12 } };
     draw(&ui, &buf, &len, &caret, opts);
 
     ui.input = .{};
@@ -1621,4 +1621,44 @@ test "textarea ctrl+a selects all, copies it, and typing replaces it" {
     draw(&ui, &buf, &len, &caret, opts);
     try std.testing.expectEqualStrings("z", buf[0..len]);
     try std.testing.expectEqual(@as(usize, 1), caret);
+}
+
+test "textarea drag selects across lines and typing replaces the range" {
+    var ui = core.Context{};
+    var buf: [64]u8 = @splat(0);
+    const seed = "abc\ndef";
+    @memcpy(buf[0..seed.len], seed);
+    var len: usize = seed.len;
+    var caret: usize = 0;
+    const opts = textedit.TextareaOpts{ .rows = 3 };
+
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tadrag", buf[0..], &len, &caret, opts);
+    ui.paint();
+    const id = core.Context.idOf("tadrag") ^ 0x7A47E;
+    const r = ui.lastRect(id) orelse return error.NoHit;
+    const px = r.x + opts.pad + 1;
+    const py0 = r.y + opts.pad + 4;
+    const py1 = r.y + opts.pad + opts.line_h + 4;
+
+    // 第一行按下（锚点），再按住拖到第二行行尾（同时抬手拿焦点）
+    ui.input = .{ .mouse = .{ .x = px, .y = py0 }, .pressed = true, .down = true };
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tadrag", buf[0..], &len, &caret, opts);
+    ui.paint();
+    try std.testing.expectEqual(@as(usize, 0), caret);
+
+    ui.input = .{ .mouse = .{ .x = r.x + r.w - 1, .y = py1 }, .down = true, .click = .{ .x = r.x + r.w - 1, .y = py1 } };
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tadrag", buf[0..], &len, &caret, opts);
+    ui.paint();
+    try std.testing.expectEqual(@as(usize, seed.len), caret);
+
+    // 有选区时输入：整段替换
+    ui.input = .{};
+    ui.input.addCharBytes("Z");
+    ui.begin(400, 200);
+    _ = textedit.textarea(&ui, "tadrag", buf[0..], &len, &caret, opts);
+    ui.paint();
+    try std.testing.expectEqualStrings("Z", buf[0..len]);
 }

@@ -102,29 +102,41 @@ pub fn textarea(
         if (caret.* >= starts[i]) caret_line = i;
     }
 
-    // 点击定位 / 双击选词 / 三击全选
-    if (it.clicked and inner_w > 0) {
-        const top_now = topLine(caret_line, opts.rows);
-        var row_i: usize = 0;
-        if (ui.input.mouse.y > rect.y + opts.pad) {
-            row_i = @intFromFloat((ui.input.mouse.y - rect.y - opts.pad) / opts.line_h);
-        }
-        const target = @min(top_now + row_i, n - 1);
-        caret.* = caretFromX(ui, lines[target], starts[target], inner_x, ui.input.mouse.x);
-        caret_line = target;
-        const now = ui.time;
-        st.clicks = if (st.clicks > 0 and now - st.last_click <= 0.42) st.clicks +| 1 else 1;
-        st.last_click = now;
-        if (st.clicks == 2) {
-            const w = widgets.wordRange(buf[0..len.*], caret.*);
-            st.anchor = w.start;
-            caret.* = w.end;
-        } else if (st.clicks >= 3) {
-            st.anchor = 0;
-            caret.* = len.*;
-            st.clicks = 0;
+    // 按下定位 + 连击（双击选词、三击全选），按住拖动扩选（与 `widgets.input` 同口径）
+    if (inner_w > 0 and (it.pressed or it.dragging)) {
+        if (it.pressed) {
+            const top_now = topLine(caret_line, opts.rows);
+            var row_i: usize = 0;
+            if (ui.input.mouse.y > rect.y + opts.pad) {
+                row_i = @intFromFloat((ui.input.mouse.y - rect.y - opts.pad) / opts.line_h);
+            }
+            const target = @min(top_now + row_i, n - 1);
+            caret.* = caretFromX(ui, lines[target], starts[target], inner_x, ui.input.mouse.x);
+            caret_line = target;
+            const now = ui.time;
+            st.clicks = if (st.clicks > 0 and now - st.last_click <= 0.42) st.clicks +| 1 else 1;
+            st.last_click = now;
+            if (st.clicks == 2) {
+                const w = widgets.wordRange(buf[0..len.*], caret.*);
+                st.anchor = w.start;
+                caret.* = w.end;
+            } else if (st.clicks >= 3) {
+                st.anchor = 0;
+                caret.* = len.*;
+                st.clicks = 0;
+            } else {
+                st.anchor = caret.*;
+            }
         } else {
-            st.anchor = caret.*;
+            // 按住拖动：锚点不动，插入符跟着鼠标走
+            const top_now = topLine(caret_line, opts.rows);
+            var row_i: usize = 0;
+            if (ui.input.mouse.y > rect.y + opts.pad) {
+                row_i = @intFromFloat((ui.input.mouse.y - rect.y - opts.pad) / opts.line_h);
+            }
+            const target = @min(top_now + row_i, n - 1);
+            caret.* = caretFromX(ui, lines[target], starts[target], inner_x, ui.input.mouse.x);
+            caret_line = target;
         }
         // 选中后光标可能跨行了，重算一次
         i = 0;
@@ -191,7 +203,12 @@ pub fn textarea(
                 caret.* = if (has_sel and !shift) a0 else prevCharStart(buf[0..len.*], caret.*);
             }
             if (ui.input.keyPressed(.right)) {
-                caret.* = if (has_sel and !shift) b0 else utf8Step(buf[0..len.*], caret.*);
+                if (has_sel and !shift) {
+                    caret.* = b0;
+                } else if (caret.* < len.*) {
+                    // utf8Step 会读 s[i]：必须自己守上界（光标在末尾时右移就是不动）
+                    caret.* = utf8Step(buf[0..len.*], caret.*);
+                }
             }
             if (ui.input.keyPressed(.home)) caret.* = starts[caret_line];
             if (ui.input.keyPressed(.end)) {
