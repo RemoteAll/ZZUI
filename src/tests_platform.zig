@@ -286,3 +286,59 @@ test "platform: x11 font renders ascii and measures non-ascii (Linux only)" {
     try std.testing.expect(cjk >= 14); // 至少 1 em（两个缺字形各按 0.5 em 算）
 }
 
+test "platform: x11 setImeCaret caches the spot and needs no IM (Linux only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const x11 = @import("platform/x11.zig");
+    // 没 DISPLAY 就跳过（CI 里的 `zig build test` 就是这种情况）
+    var b = x11.Backend.init("zzui-ime-test", 64, 64, false) catch return error.SkipZigTest;
+    defer b.deinit();
+
+    // 拿到 IM 不一定能建 IC：Xlib 本地 IM 在部分环境下两种 preedit 风格都拒绝
+    // （WSLg 实测 position / nothing 都返回 null）。所以这里只要求「不崩」而行。
+    if (b.im != null and b.ic == null) {
+        // 没 IC 时 setImeCaret 必须是空实现（不能去碰 null）
+        b.setImeCaret(.{ .x = 1, .y = 2, .w = 1, .h = 10 });
+    }
+
+    // 缓存：第一次记下位置，第二次相同位置不该再调 XIC（这里只验证缓存值）
+    b.setImeCaret(.{ .x = 12, .y = 20, .w = 1.5, .h = 16 });
+    try std.testing.expectEqual(@as(c_short, 12), b.ime_spot.x);
+    try std.testing.expectEqual(@as(c_short, 36), b.ime_spot.y);
+    b.setImeCaret(.{ .x = 12, .y = 20, .w = 1.5, .h = 16 });
+    try std.testing.expectEqual(@as(c_short, 36), b.ime_spot.y);
+
+    // 负数/超大坐标要夹进 short（不然组字窗会跑到屏外）
+    b.setImeCaret(.{ .x = -50, .y = -50, .w = 1, .h = 10 });
+    try std.testing.expectEqual(@as(c_short, 0), b.ime_spot.x);
+    b.setImeCaret(.{ .x = 1e9, .y = 1e9, .w = 1, .h = 10 });
+    try std.testing.expectEqual(@as(c_short, 32767), b.ime_spot.x);
+}
+
+test "platform: x11 keeps non-ascii input bytes and drops control chars (Linux only)" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const x11 = @import("platform/x11.zig");
+
+    var buf: [32]u8 = @splat(0);
+    // 纯 ASCII
+    @memcpy(buf[0..2], "ab");
+    try std.testing.expectEqual(@as(usize, 2), x11.compactInputBytes(buf[0..], 2));
+    try std.testing.expectEqualStrings("ab", buf[0..2]);
+
+    // 控制字符夹在中间：回车 (\r) 与退格 (\x08) 被剔除，其余原样
+    const mixed = "a\rb\x08c";
+    @memcpy(buf[0..mixed.len], mixed);
+    const n = x11.compactInputBytes(buf[0..], mixed.len);
+    try std.testing.expectEqualStrings("abc", buf[0..n]);
+
+    // 非 ASCII（西里尔 "Привет" = 12 字节 + 中文 6 字节）一个字节都不能丢
+    const cyr = "Привет中文";
+    @memcpy(buf[0..cyr.len], cyr);
+    const m = x11.compactInputBytes(buf[0..], cyr.len);
+    try std.testing.expectEqual(cyr.len, m);
+    try std.testing.expectEqualStrings(cyr, buf[0..m]);
+
+    // n 超过缓冲不该越界
+    try std.testing.expectEqual(@as(usize, 0), x11.compactInputBytes(buf[0..0], 5));
+}
+
+

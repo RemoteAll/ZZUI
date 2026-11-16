@@ -41,6 +41,8 @@ const ButtonRelease = 5;
 const KeyPress = 2;
 const KeyRelease = 3;
 const MotionNotify = 6;
+const FocusIn = 9;
+const FocusOut = 10;
 const ConfigureNotify = 22;
 const DestroyNotify = 17;
 const SelectionClear = 29;
@@ -58,6 +60,7 @@ const ButtonReleaseMask: c_long = 1 << 3;
 const PointerMotionMask: c_long = 1 << 6;
 const ExposureMask: c_long = 1 << 15;
 const StructureNotifyMask: c_long = 1 << 17;
+const FocusChangeMask: c_long = 1 << 21;
 const ZPixmap: c_int = 2;
 const GCFont: c_ulong = 1 << 14;
 const AllPlanes: c_ulong = ~@as(c_ulong, 0);
@@ -299,6 +302,29 @@ extern fn XDeleteProperty(*Display, Window, Atom) c_int;
 extern fn XSendEvent(*Display, Window, c_int, c_long, *XEvent) c_int;
 extern fn XFree(?*anyopaque) c_int;
 
+// ---- 输入法（XIM）：没有 IM 也能跑（回退 XLookupString + ASCII）
+const XIM = opaque {};
+const XIC = opaque {};
+const XPoint = extern struct { x: c_short, y: c_short };
+const XIMPreeditPosition: c_ulong = 0x0004;
+const XIMPreeditNothing: c_ulong = 0x0001;
+const XIMStatusNothing: c_ulong = 0x0400;
+const XLookupChars: c_int = 2;
+const XLookupBoth: c_int = 4;
+const LC_ALL: c_int = 6;
+
+extern fn setlocale(c_int, ?[*:0]const u8) ?[*:0]u8;
+extern fn XSetLocaleModifiers(?[*:0]const u8) ?[*:0]u8;
+extern fn XOpenIM(*Display, ?*anyopaque, ?[*:0]const u8, ?[*:0]const u8) ?*XIM;
+extern fn XCloseIM(*XIM) c_int;
+extern fn XCreateIC(?*XIM, ...) ?*XIC;
+extern fn XDestroyIC(*XIC) void;
+extern fn XSetICFocus(*XIC) void;
+extern fn XUnsetICFocus(*XIC) void;
+extern fn XSetICValues(*XIC, ...) ?[*:0]const u8;
+extern fn XFilterEvent(*XEvent, Window) c_int;
+extern fn Xutf8LookupString(*XIC, *const XKeyEvent, [*]u8, c_int, ?*c_ulong, ?*c_int) c_int;
+
 // ------------------------------------------------------------------ 字形图集
 
 const GLYPH_FIRST = 32;
@@ -363,6 +389,11 @@ pub const Backend = struct {
     drops: DropList = .{},
     /// 本帧有效的拖放条数（与 Win32 同口径："本帧事件"）
     drop_active: u8 = 0,
+    /// 输入法（XIM）。`im` 拿不到就两个都是 null —— 退化成只输 ASCII。
+    im: ?*XIM = null,
+    ic: ?*XIC = null,
+    /// 上一次告诉输入法的插入符位置（文本光标的左下角）：只在变化时 XSetICValues。
+    ime_spot: XPoint = .{ .x = -1, .y = -1 },
 
     pub fn init(title: []const u8, width: u32, height: u32, show: bool) !Backend {
         const dpy = XOpenDisplay(null) orelse return error.PlatformNotImplemented;
@@ -374,7 +405,7 @@ pub const Backend = struct {
         var self = Backend{ .dpy = dpy };
         self.win = XCreateSimpleWindow(dpy, root, 0, 0, width, height, 1, 0x000000, 0xFFFFFF);
         _ = XSelectInput(dpy, self.win, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
-            PointerMotionMask | ExposureMask | StructureNotifyMask);
+            PointerMotionMask | ExposureMask | StructureNotifyMask | FocusChangeMask);
         var name_buf: [256]u8 = undefined;
         const n = @min(title.len, name_buf.len - 1);
         @memcpy(name_buf[0..n], title[0..n]);
@@ -416,6 +447,35 @@ pub const Backend = struct {
         self.loadGlyphs();
         // 有 FreeType 就优先用真字体（含中文）：失败就保持 null，行为退回核心字体
         self.font = ft.Font.open();
+        // 输入法：先用环境 locale（XIM 靠它做编码转换），拿不到 IM 就继续（只能输 ASCII）
+        _ = setlocale(LC_ALL, "");
+        _ = XSetLocaleModifiers("");
+        if (XOpenIM(dpy, null, null, null)) |im| {
+            self.im = im;
+            // 先要「预编辑定位」（组字串画在光标处）；本地 IM 不一定支持，退回「不预编辑」
+            self.ic = XCreateIC(
+                im,
+                @as([*:0]const u8, "inputStyle"),
+                @as(c_ulong, XIMPreeditPosition | XIMStatusNothing),
+                @as([*:0]const u8, "clientWindow"),
+                self.win,
+                @as([*:0]const u8, "focusWindow"),
+                self.win,
+                @as(?*const anyopaque, null),
+            );
+            if (self.ic == null) {
+                self.ic = XCreateIC(
+                    im,
+                    @as([*:0]const u8, "inputStyle"),
+                    @as(c_ulong, XIMPreeditNothing | XIMStatusNothing),
+                    @as([*:0]const u8, "clientWindow"),
+                    self.win,
+                    @as([*:0]const u8, "focusWindow"),
+                    self.win,
+                    @as(?*const anyopaque, null),
+                );
+            }
+        }
         if (show) _ = XMapWindow(dpy, self.win);
         _ = XFlush(dpy);
         return self;
@@ -500,6 +560,14 @@ pub const Backend = struct {
     }
 
     pub fn deinit(self: *Backend) void {
+        if (self.ic) |ic| {
+            XDestroyIC(ic);
+            self.ic = null;
+        }
+        if (self.im) |im| {
+            _ = XCloseIM(im);
+            self.im = null;
+        }
         if (self.font) |*f| {
             f.close();
             self.font = null;
@@ -555,8 +623,19 @@ pub const Backend = struct {
     /// 单个 X 事件的处理（`poll` 与剪贴板往返共用，免得两处各写一份）。
     fn handleEvent(self: *Backend, ev: XEvent) void {
         const dpy = self.dpy orelse return;
+        // 输入法先过一道：被它吃掉的事件（组字/候选键盘导航）不再往下走
+        if (self.ic != null and (ev.type == KeyPress or ev.type == KeyRelease)) {
+            var e = ev;
+            if (XFilterEvent(&e, self.win) != 0) return;
+        }
         switch (ev.type) {
             Expose => {},
+            FocusIn => {
+                if (self.ic) |ic| XSetICFocus(ic);
+            },
+            FocusOut => {
+                if (self.ic) |ic| XUnsetICFocus(ic);
+            },
             ConfigureNotify => {
                 const ce = ev.configure;
                 if (ce.width > 0 and ce.height > 0) {
@@ -617,20 +696,33 @@ pub const Backend = struct {
             },
             KeyPress => {
                 const ke = ev.key;
-                var buf: [8]u8 = @splat(0);
+                var buf: [32]u8 = @splat(0);
                 var sym: c_ulong = 0;
-                const n = XLookupString(&ke, &buf, buf.len, &sym, null);
-                if (mapKeysym(sym)) |k| self.input.addKey(k);
-                if (n > 0) {
-                    // 只取可打印 ASCII：核心字体画不了别的，别把乱码塞进输入框
-                    if (buf[0] >= 32 and buf[0] < 127) self.input.addCharBytes(buf[0..1]);
-                }
                 self.input.mods = .{
                     .ctrl = (ke.state & ControlMask) != 0,
                     .shift = (ke.state & ShiftMask) != 0,
                     .alt = (ke.state & Mod1Mask) != 0,
                     .win = (ke.state & Mod4Mask) != 0,
                 };
+                if (self.ic) |ic| {
+                    // 有输入法：Xutf8LookupString 给的就是 UTF-8（中文/日文都能进来）
+                    var status: c_int = 0;
+                    const n = Xutf8LookupString(ic, &ke, &buf, buf.len, &sym, &status);
+                    if (mapKeysym(sym)) |k| self.input.addKey(k);
+                    if ((status == XLookupChars or status == XLookupBoth) and n > 0) {
+                        const keep = compactInputBytes(buf[0..], @intCast(n));
+                        if (keep > 0) self.input.addCharBytes(buf[0..keep]);
+                    }
+                } else {
+                    // 没有输入法：XLookupString 按**当前 locale** 编码（UTF-8 locale 下就是 UTF-8），
+                    // 非 ASCII 也照收 —— 以前这里只放行 ASCII，把键盘布局打出来的西里尔/希腊字母全丢了。
+                    const n = XLookupString(&ke, &buf, buf.len, &sym, null);
+                    if (mapKeysym(sym)) |k| self.input.addKey(k);
+                    if (n > 0) {
+                        const keep = compactInputBytes(buf[0..], @intCast(n));
+                        if (keep > 0) self.input.addCharBytes(buf[0..keep]);
+                    }
+                }
             },
             KeyRelease => {
                 const ke = ev.key;
@@ -1014,8 +1106,17 @@ pub const Backend = struct {
         return 0;
     }
 
-    /// X11 侧没有接输入法（要走 XIM 才有组成串，属未完成项），插入符位置直接忽略。
-    pub fn setImeCaret(_: *Backend, _: t.Rect) void {}
+    /// 把输入法的 spot（组字窗锚点）挪到文本光标处：只在位置变化时真调 XIC。
+    /// 没有输入法就是空实现（App.end 每帧都会调，但不能每帧都去改 XIC 属性）。
+    pub fn setImeCaret(self: *Backend, r: t.Rect) void {
+        const x: c_short = @intFromFloat(@max(@min(r.x, 32767), 0));
+        const y: c_short = @intFromFloat(@max(@min(r.y + r.h, 32767), 0));
+        if (self.ime_spot.x == x and self.ime_spot.y == y) return;
+        self.ime_spot = .{ .x = x, .y = y };
+        const ic = self.ic orelse return;
+        var spot = XPoint{ .x = x, .y = y };
+        _ = XSetICValues(ic, @as([*:0]const u8, "spotLocation"), &spot, @as(?*const anyopaque, null));
+    }
 
     pub fn setClipboard(self: *Backend, text: []const u8) void {
         const n = @min(text.len, self.clip_text.len);
@@ -1052,6 +1153,32 @@ pub const DropList = struct {
         self.n += 1;
     }
 };
+
+/// 从键盘查询拿到的字节里剔掉控制字符（`< 0x20`：回车/退格/制表已由 keysym 处理），
+/// 原地压缩并返回保留的字节数。
+/// **非 ASCII 一律保留** —— Xlib 按当前 locale 编码（UTF-8 locale 下就是 UTF-8），
+/// 以前这里只放行 ASCII，键盘布局打出来的西里尔/希腊字母全被丢了。
+pub fn compactInputBytes(buf: []u8, n: usize) usize {
+    const len = @min(n, buf.len);
+    var keep: usize = 0;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        if (buf[i] >= 0x20) continue;
+        if (i > start) {
+            // keep == start 时是自拷贝 —— Zig 的 @memcpy 会报 alias panic
+            if (keep != start) @memcpy(buf[keep..][0 .. i - start], buf[start..i]);
+            keep += i - start;
+        }
+        start = i + 1;
+    }
+    if (len > start) {
+        // 一条控制字符都没有时 keep == start：**不能** @memcpy 到自身（Zig 会报 alias panic）
+        if (keep != start) @memcpy(buf[keep..][0 .. len - start], buf[start..len]);
+        keep += len - start;
+    }
+    return keep;
+}
 
 /// 解析 `text/uri-list`：每行一个 `file://` URI，`#` 开头是注释，支持 `%XX` 转义。
 /// 不是 `file://` 的行直接跳过（浏览器拖过来的链接我们也不便处理）。
